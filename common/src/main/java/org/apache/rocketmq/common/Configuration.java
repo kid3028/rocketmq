@@ -275,8 +275,15 @@ public class Configuration {
         return stringBuilder.toString();
     }
 
+    /**
+     * 将配置合并
+     * @param from
+     * @param to
+     */
     private void merge(Properties from, Properties to) {
+        // 遍历新配置
         for (Object key : from.keySet()) {
+            // 如果就配置中有与新配置相同的，使用新的配置覆盖旧配置
             Object fromObj = from.get(key), toObj = to.get(key);
             if (toObj != null && !toObj.equals(fromObj)) {
                 log.info("Replace, key: {}, value: {} -> {}", key, toObj, fromObj);

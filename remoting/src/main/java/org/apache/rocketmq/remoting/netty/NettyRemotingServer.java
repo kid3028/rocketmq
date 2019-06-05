@@ -83,11 +83,12 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
 
     public NettyRemotingServer(final NettyServerConfig nettyServerConfig,
         final ChannelEventListener channelEventListener) {
+        // 指定单向和异步信号量的容量
         super(nettyServerConfig.getServerOnewaySemaphoreValue(), nettyServerConfig.getServerAsyncSemaphoreValue());
         this.serverBootstrap = new ServerBootstrap();
         this.nettyServerConfig = nettyServerConfig;
         this.channelEventListener = channelEventListener;
-
+        // 公共线程池数量，默认4
         int publicThreadNums = nettyServerConfig.getServerCallbackExecutorThreads();
         if (publicThreadNums <= 0) {
             publicThreadNums = 4;
@@ -110,7 +111,10 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
                 return new Thread(r, String.format("NettyBoss_%d", this.threadIndex.incrementAndGet()));
             }
         });
-
+        /*
+         * 判断是否使用epoll构建selector线程池，即worker线程
+         * 判断条件：linux平台 && 用户指定了使用epoll && epoll可用
+         */
         if (useEpoll()) {
             this.eventLoopGroupSelector = new EpollEventLoopGroup(nettyServerConfig.getServerSelectorThreads(), new ThreadFactory() {
                 private AtomicInteger threadIndex = new AtomicInteger(0);
@@ -132,7 +136,7 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
                 }
             });
         }
-
+        // 加载ssl上下文
         loadSslContext();
     }
 

@@ -471,15 +471,27 @@ public class RouteInfoManager {
         while (it.hasNext()) {
             Entry<String, BrokerLiveInfo> next = it.next();
             long last = next.getValue().getLastUpdateTimestamp();
+            // 如果broker两分钟没有向NameServer发送过信息，那么将会关闭与该Broker的Channel，并将broker从brokerLiveTable中移除
             if ((last + BROKER_CHANNEL_EXPIRED_TIME) < System.currentTimeMillis()) {
+                // 关闭Channel
                 RemotingUtil.closeChannel(next.getValue().getChannel());
+                // 从brokerLiveTable中移除
                 it.remove();
                 log.warn("The broker channel expired, {} {}ms", next.getKey(), BROKER_CHANNEL_EXPIRED_TIME);
+                // 触发Channel销毁操作
                 this.onChannelDestroy(next.getKey(), next.getValue().getChannel());
             }
         }
     }
 
+    /**
+     * 销毁channel
+     *  1.根据Channel从brokerLiveTable中获取到对应的broker
+     *  2.如果broker存在
+     *    2.1.分别将该broker从brokerLiveTable、filterServerTable中移除
+     * @param remoteAddr
+     * @param channel
+     */
     public void onChannelDestroy(String remoteAddr, Channel channel) {
         String brokerAddrFound = null;
         if (channel != null) {

@@ -16,16 +16,12 @@
  */
 package org.apache.rocketmq.namesrv;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import org.apache.rocketmq.common.Configuration;
 import org.apache.rocketmq.common.ThreadFactoryImpl;
 import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.common.namesrv.NamesrvConfig;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
-import org.apache.rocketmq.common.namesrv.NamesrvConfig;
 import org.apache.rocketmq.namesrv.kvconfig.KVConfigManager;
 import org.apache.rocketmq.namesrv.processor.ClusterTestRequestProcessor;
 import org.apache.rocketmq.namesrv.processor.DefaultRequestProcessor;
@@ -37,6 +33,11 @@ import org.apache.rocketmq.remoting.netty.NettyRemotingServer;
 import org.apache.rocketmq.remoting.netty.NettyServerConfig;
 import org.apache.rocketmq.remoting.netty.TlsSystemConfig;
 import org.apache.rocketmq.srvutil.FileWatchService;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 
 public class NamesrvController {
@@ -74,16 +75,17 @@ public class NamesrvController {
     }
 
     public boolean initialize() {
-
+        // 加载KV配置表
         this.kvConfigManager.load();
-
+        // 构造NettyRemotingServer
         this.remotingServer = new NettyRemotingServer(this.nettyServerConfig, this.brokerHousekeepingService);
-
+        // remoting线程池
         this.remotingExecutor =
             Executors.newFixedThreadPool(nettyServerConfig.getServerWorkerThreads(), new ThreadFactoryImpl("RemotingExecutorThread_"));
-
+        // 注册默认请求处理器，用于每个请求代码在处理器表中没有完全匹配的情况，处理请求时使用的线程池即为remotingExecutor
         this.registerProcessor();
 
+        // 每隔10秒扫描未激活的broker，将其踢出
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
@@ -92,6 +94,7 @@ public class NamesrvController {
             }
         }, 5, 10, TimeUnit.SECONDS);
 
+        // 每隔10分钟打印KV配置表的内容
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
@@ -103,6 +106,7 @@ public class NamesrvController {
         if (TlsSystemConfig.tlsMode != TlsMode.DISABLED) {
             // Register a listener to reload SslContext
             try {
+                // 注册一个监听器以重新加载SslContext 如果相关的文件发送变化会触发监听
                 fileWatchService = new FileWatchService(
                     new String[] {
                         TlsSystemConfig.tlsServerCertPath,

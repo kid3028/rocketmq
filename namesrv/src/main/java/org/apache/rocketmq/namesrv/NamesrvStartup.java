@@ -59,8 +59,11 @@ public class NamesrvStartup {
     public static NamesrvController main0(String[] args) {
 
         try {
+            // 创建NameServer控制器
             NamesrvController controller = createNamesrvController(args);
+            // 启动NameServer控制器
             start(controller);
+            // 启动成功打印提示
             String tip = "The Name Server boot success. serializeType=" + RemotingCommand.getSerializeTypeConfigInThisServer();
             log.info(tip);
             System.out.printf("%s%n", tip);
@@ -82,10 +85,12 @@ public class NamesrvStartup {
      * @throws JoranException
      */
     public static NamesrvController createNamesrvController(String[] args) throws IOException, JoranException {
+        // 设置当前RocketMQ的版本到系统变量中
         System.setProperty(RemotingCommand.REMOTING_VERSION_KEY, Integer.toString(MQVersion.CURRENT_VERSION));
         //PackageConflictDetect.detectFastjson();
-
+        // 构建命令行选项，添加-h -n选项 -h 帮助 -n nameServer地址列表
         Options options = ServerUtil.buildCommandlineOptions(new Options());
+        // 添加-c -p选项，解析命令行 -c 指定配置文件 -p 打印系统配置
         commandLine = ServerUtil.parseCmdLine("mqnamesrv", args, buildCommandlineOptions(options), new PosixParser());
         if (null == commandLine) {
             System.exit(-1);
@@ -140,26 +145,35 @@ public class NamesrvStartup {
         MixAll.printObjectProperties(log, namesrvConfig);
         MixAll.printObjectProperties(log, nettyServerConfig);
 
+        // 初始化NamesrvController
         final NamesrvController controller = new NamesrvController(namesrvConfig, nettyServerConfig);
 
         // remember all configs to prevent discard
+        // 记住所有的配置，以防止被丢失
         controller.getConfiguration().registerConfig(properties);
 
         return controller;
     }
 
+    /**
+     * 启动NameServer控制器
+     * @param controller
+     * @return
+     * @throws Exception
+     */
     public static NamesrvController start(final NamesrvController controller) throws Exception {
 
         if (null == controller) {
             throw new IllegalArgumentException("NamesrvController is null");
         }
-
+        // 初始化控制器
         boolean initResult = controller.initialize();
         if (!initResult) {
+            // 初始化控制器失败，关闭控制器
             controller.shutdown();
             System.exit(-3);
         }
-
+        // 添加关闭钩子，在停止系统时关闭控制器
         Runtime.getRuntime().addShutdownHook(new ShutdownHookThread(log, new Callable<Void>() {
             @Override
             public Void call() throws Exception {
@@ -167,7 +181,7 @@ public class NamesrvStartup {
                 return null;
             }
         }));
-
+        // 启动控制器
         controller.start();
 
         return controller;

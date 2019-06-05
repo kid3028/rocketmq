@@ -18,6 +18,12 @@
 package org.apache.rocketmq.srvutil;
 
 import com.google.common.base.Strings;
+import org.apache.rocketmq.common.ServiceThread;
+import org.apache.rocketmq.common.UtilAll;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -27,12 +33,10 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
-import org.apache.rocketmq.common.ServiceThread;
-import org.apache.rocketmq.common.UtilAll;
-import org.apache.rocketmq.common.constant.LoggerName;
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.logging.InternalLoggerFactory;
 
+/**
+ * 文件监听器，监测文件是否发生变化，如果文件发生了变化，那么触发监听器
+ */
 public class FileWatchService extends ServiceThread {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.COMMON_LOGGER_NAME);
 
@@ -61,22 +65,28 @@ public class FileWatchService extends ServiceThread {
         return "FileWatchService";
     }
 
+    /**
+     * 文件监听器，监测文件是否发生变化，如果文件发生了变化，那么触发监听器
+     */
     @Override
     public void run() {
         log.info(this.getServiceName() + " service started");
 
         while (!this.isStopped()) {
             try {
+                // 每隔500ms检查一次文件是否被更新
                 this.waitForRunning(WATCH_INTERVAL);
 
                 for (int i = 0; i < watchFiles.size(); i++) {
                     String newHash;
                     try {
+                        // 计算文件hash值
                         newHash = hash(watchFiles.get(i));
                     } catch (Exception ignored) {
                         log.warn(this.getServiceName() + " service has exception when calculate the file hash. ", ignored);
                         continue;
                     }
+                    // 如果两个文件的hash值不同，那么说明文件内容发送变化，触发监听
                     if (!newHash.equals(fileCurrentHash.get(i))) {
                         fileCurrentHash.set(i, newHash);
                         listener.onChanged(watchFiles.get(i));
@@ -89,6 +99,13 @@ public class FileWatchService extends ServiceThread {
         log.info(this.getServiceName() + " service end");
     }
 
+    /**
+     * 对文件字节数组进行MD5获取新的hash值
+     * @param filePath
+     * @return
+     * @throws IOException
+     * @throws NoSuchAlgorithmException
+     */
     private String hash(String filePath) throws IOException, NoSuchAlgorithmException {
         Path path = Paths.get(filePath);
         md.update(Files.readAllBytes(path));
