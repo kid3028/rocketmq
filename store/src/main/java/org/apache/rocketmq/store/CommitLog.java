@@ -16,6 +16,18 @@
  */
 package org.apache.rocketmq.store;
 
+import org.apache.rocketmq.common.ServiceThread;
+import org.apache.rocketmq.common.UtilAll;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.common.message.*;
+import org.apache.rocketmq.common.sysflag.MessageSysFlag;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.store.config.BrokerRole;
+import org.apache.rocketmq.store.config.FlushDiskType;
+import org.apache.rocketmq.store.ha.HAService;
+import org.apache.rocketmq.store.schedule.ScheduleMessageService;
+
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -23,21 +35,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import org.apache.rocketmq.common.ServiceThread;
-import org.apache.rocketmq.common.UtilAll;
-import org.apache.rocketmq.common.constant.LoggerName;
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.logging.InternalLoggerFactory;
-import org.apache.rocketmq.common.message.MessageAccessor;
-import org.apache.rocketmq.common.message.MessageConst;
-import org.apache.rocketmq.common.message.MessageDecoder;
-import org.apache.rocketmq.common.message.MessageExt;
-import org.apache.rocketmq.common.message.MessageExtBatch;
-import org.apache.rocketmq.common.sysflag.MessageSysFlag;
-import org.apache.rocketmq.store.config.BrokerRole;
-import org.apache.rocketmq.store.config.FlushDiskType;
-import org.apache.rocketmq.store.ha.HAService;
-import org.apache.rocketmq.store.schedule.ScheduleMessageService;
 
 /**
  * Store all metadata downtime for recovery, data protection reliability
@@ -516,6 +513,19 @@ public class CommitLog {
         return beginTimeInLock;
     }
 
+    /**
+     * broker处理延时消息
+     * broker收到延时消息和正常消息在前置处理的流程是一致的，对于延时消息的特殊处理体现在将消息写入存储的时候
+     *
+     * 延时topic org.apache.rocketmq.store.schedule.ScheduleMessageService#SCHEDULE_TOPIC=SCHEDULE_TOPIC_XXXX
+     * 这个topic是一个特殊的topic，和正常的topic不同的地方是：
+     *    1.不会创建TopicConfig，因此也不需要consumer直接消费这个topic下的消息
+     *    2.不会将这个topic注册到namesrv
+     *    3.这个topic的队列个数和延时等级的个数是相同的
+     *
+     * @param msg
+     * @return
+     */
     public PutMessageResult putMessage(final MessageExtBrokerInner msg) {
         // Set the storage time
         msg.setStoreTimestamp(System.currentTimeMillis());
@@ -527,24 +537,31 @@ public class CommitLog {
 
         StoreStatsService storeStatsService = this.defaultMessageStore.getStoreStatsService();
 
+        // 拿到原始topic和对应的queueId
         String topic = msg.getTopic();
         int queueId = msg.getQueueId();
 
         final int tranType = MessageSysFlag.getTransactionValue(msg.getSysFlag());
+        // 非事务消息和事务的commit消息才会进一步判断delayLevel
         if (tranType == MessageSysFlag.TRANSACTION_NOT_TYPE
             || tranType == MessageSysFlag.TRANSACTION_COMMIT_TYPE) {
             // Delay Delivery
             if (msg.getDelayTimeLevel() > 0) {
+                // 纠正设置过大的level，就是delayLevel设置都大于延时时间等级的最大等级
                 if (msg.getDelayTimeLevel() > this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel()) {
                     msg.setDelayTimeLevel(this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel());
                 }
 
+                // 设置为延时队里的topic SCHEDULE_TOPIC_XXXX
                 topic = ScheduleMessageService.SCHEDULE_TOPIC;
+                // 每个延时等级一个queue，queueId = delayLevel - 1
                 queueId = ScheduleMessageService.delayLevel2QueueId(msg.getDelayTimeLevel());
 
                 // Backup real topic, queueId
+                // 备份原始的topic和queueId
                 MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_TOPIC, msg.getTopic());
                 MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_QUEUE_ID, String.valueOf(msg.getQueueId()));
+                // 更新properties
                 msg.setPropertiesString(MessageDecoder.messageProperties2String(msg.getProperties()));
 
                 msg.setTopic(topic);
@@ -655,15 +672,34 @@ public class CommitLog {
         }
     }
 
+    /**
+     * SYNC_MASTER同步数据到slave
+     * SYNC_MASTER和ASYNC_MASTER传输数据到slave的过程是一致的，只是时机不一样。SYNC_MASTER接收到producer发送来的消息时候，会同步等待消息也传输到slave
+     *    1.master将需要传输到slave到的数据构造为GroupCommitRequest交给GroupTransferService
+     *    2.唤醒传输数据的线程(如果没有更多数据需要传输的时候，HAClient.run方法会等待新的消息)
+     *    3.等待当前的传输请求完成
+     *
+     *  在HAService启动的时候会启动GroupTransferService线程，GroupTransferService并没有真正的传输数据，传数据还是HAConnection。
+     *  GroupTransferService只是将push2SlaveMaxOffset和需要传输到slave的消息的offset比较，如果 push2SlaveMaxOffset > req.getNextOffset() 则说明slave已经收到该消息，
+     *  这个时候会通知request，消息已经传输完成
+     *  push2SlaveMaxOffset这个字段表示当前slave收到消息的最大的offset，每次master收到slave的ACK之后会更新这个值。
+     * @param result
+     * @param putMessageResult
+     * @param messageExt
+     */
     public void handleHA(AppendMessageResult result, PutMessageResult putMessageResult, MessageExt messageExt) {
+        // 如果是SYNC_MASTER才会同步等待
         if (BrokerRole.SYNC_MASTER == this.defaultMessageStore.getMessageStoreConfig().getBrokerRole()) {
             HAService service = this.defaultMessageStore.getHaService();
             if (messageExt.isWaitStoreMsgOK()) {
                 // Determine whether to wait
+                // 存在slave并且slave不能落后master太多
                 if (service.isSlaveOK(result.getWroteOffset() + result.getWroteBytes())) {
                     GroupCommitRequest request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes());
                     service.putRequest(request);
+                    // 唤醒可能等待新的消息数据到的传输数据线程
                     service.getWaitNotifyObject().wakeupAll();
+                    // 等待当前的消息被传输到slave，等待slave收到该消息的确认后则flushOK=true
                     boolean flushOK =
                         request.waitForFlush(this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout());
                     if (!flushOK) {
@@ -1306,6 +1342,7 @@ public class CommitLog {
                 msgInner.getStoreTimestamp(), queueOffset, CommitLog.this.defaultMessageStore.now() - beginTimeMills);
 
             switch (tranType) {
+                // broker在将消息写入commitLog的时候会判断消息类型，如果是prepare或者rollback消息，ConsumeQueue的offset不会增加
                 case MessageSysFlag.TRANSACTION_PREPARED_TYPE:
                 case MessageSysFlag.TRANSACTION_ROLLBACK_TYPE:
                     break;

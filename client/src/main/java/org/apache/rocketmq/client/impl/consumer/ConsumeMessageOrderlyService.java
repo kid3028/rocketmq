@@ -16,16 +16,6 @@
  */
 package org.apache.rocketmq.client.impl.consumer;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.Executors;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 import org.apache.rocketmq.client.consumer.DefaultMQPushConsumer;
 import org.apache.rocketmq.client.consumer.listener.ConsumeOrderlyContext;
 import org.apache.rocketmq.client.consumer.listener.ConsumeOrderlyStatus;
@@ -37,16 +27,18 @@ import org.apache.rocketmq.client.stat.ConsumerStatsManager;
 import org.apache.rocketmq.common.MixAll;
 import org.apache.rocketmq.common.ThreadFactoryImpl;
 import org.apache.rocketmq.common.UtilAll;
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.common.message.Message;
-import org.apache.rocketmq.common.message.MessageAccessor;
-import org.apache.rocketmq.common.message.MessageConst;
-import org.apache.rocketmq.common.message.MessageExt;
-import org.apache.rocketmq.common.message.MessageQueue;
+import org.apache.rocketmq.common.message.*;
 import org.apache.rocketmq.common.protocol.body.CMResult;
 import org.apache.rocketmq.common.protocol.body.ConsumeMessageDirectlyResult;
 import org.apache.rocketmq.common.protocol.heartbeat.MessageModel;
+import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.remoting.common.RemotingHelper;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.concurrent.*;
 
 public class ConsumeMessageOrderlyService implements ConsumeMessageService {
     private static final InternalLogger log = ClientLogger.getLog();
@@ -194,7 +186,19 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
         final MessageQueue messageQueue,
         final boolean dispathToConsume) {
         if (dispathToConsume) {
+            // 拉取到的消息构造ConsumerRequest，然后放入线程池中等待执行
             ConsumeRequest consumeRequest = new ConsumeRequest(processQueue, messageQueue);
+            /**
+             * 那么将请求放入线程池了，所以线程执行的顺序又不确定了，那么consumer消费就变成无序的了？？？
+             *    当然不会！！！ 关键在于boolean dispatchToConsume = processQueue.putMessage(pullResult.getMsgFoundList())这行代码。
+             * ProcessQueue的数据结构：
+             *    一个MessageQueue对应一个ProcessQueue，是一个有序队列，该队列记录了一个queueId下所有从broker pull回来的信息，如果消费成功了就会从队列中删除。
+             *
+             *    ProcessQueue有序到的原因是维护了一个TreeMap  org.apache.rocketmq.client.impl.consumer.ProcessQueue#msgTreeMap
+             *
+             *    msgTreeMap里面维护了从broker pull回来的所有消息，TreeMap是有序的，key是Long类型的，没有指定comparator，默认是将key强转为Comparable，然后进行比较，
+             *    因为key是当前消息的offset，而Long实现了Comparable接口，所以msgTreeMap里面的消息是按照offset排序的，ProcessQueue保证了拉取回来的消息是有序的
+             */
             this.consumeExecutor.submit(consumeRequest);
         }
     }
@@ -404,6 +408,7 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                 return;
             }
 
+            // 保证一个队列只有一个线程访问，因为顺序消息只有一个队列，也就保证了只有一个线程消费
             final Object objLock = messageQueueLock.fetchLockObject(this.messageQueue);
             synchronized (objLock) {
                 if (MessageModel.BROADCASTING.equals(ConsumeMessageOrderlyService.this.defaultMQPushConsumerImpl.messageModel())
@@ -434,7 +439,8 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                             ConsumeMessageOrderlyService.this.submitConsumeRequestLater(processQueue, messageQueue, 10);
                             break;
                         }
-
+                        // 从ProducerQueue中获取消息进行消费，获取出来的消息也就有序的，consumer保证了消费的有序性
+                        // mq从发送消息、broker存储消息到consumer消费消息整个过程中，环环相扣，最终保证了消息是有序的。
                         final int consumeBatchSize =
                             ConsumeMessageOrderlyService.this.defaultMQPushConsumer.getConsumeMessageBatchMaxSize();
 

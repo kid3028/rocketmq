@@ -16,10 +16,13 @@
  */
 package org.apache.rocketmq.client.consumer.listener;
 
-import java.util.List;
 import org.apache.rocketmq.common.message.MessageExt;
 
+import java.util.List;
+
 /**
+ * 顺序消费
+ * 保证了broker中物理存储的消息是顺序的，只要保证消息消费是顺序的，就能保证整个过程是顺序消息
  * A MessageListenerConcurrently object is used to receive asynchronously delivered messages orderly.one queue,one
  * thread
  */

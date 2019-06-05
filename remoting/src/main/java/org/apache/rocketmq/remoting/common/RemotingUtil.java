@@ -19,21 +19,17 @@ package org.apache.rocketmq.remoting.common;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+
 import java.io.IOException;
 import java.lang.reflect.Method;
-import java.net.Inet6Address;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.NetworkInterface;
-import java.net.SocketAddress;
+import java.net.*;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 import java.nio.channels.spi.SelectorProvider;
 import java.util.ArrayList;
 import java.util.Enumeration;
-
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.logging.InternalLoggerFactory;
 
 public class RemotingUtil {
     public static final String OS_NAME = System.getProperty("os.name");
@@ -166,13 +162,15 @@ public class RemotingUtil {
     public static SocketChannel connect(SocketAddress remote, final int timeoutMillis) {
         SocketChannel sc = null;
         try {
-            sc = SocketChannel.open();
-            sc.configureBlocking(true);
+            sc = SocketChannel.open(); // 打开channel
+            sc.configureBlocking(true); // 设置同步阻塞
+            // 设置了关闭socket的延迟事件，那么当线程执行socket的close()方法时，会进入阻塞状态，直到socket发送完所有的剩余数据，或者超过了方法设置的延迟时间，才从close()方法返回
             sc.socket().setSoLinger(false, -1);
+            // 该参数的作用为禁止使用Nagle算法，使用于小数据传输，Nagle算法通过将缓冲区的小封包自动相连，组成较大的封包
             sc.socket().setTcpNoDelay(true);
-            sc.socket().setReceiveBufferSize(1024 * 64);
-            sc.socket().setSendBufferSize(1024 * 64);
-            sc.socket().connect(remote, timeoutMillis);
+            sc.socket().setReceiveBufferSize(1024 * 64); // 设置接收缓冲区
+            sc.socket().setSendBufferSize(1024 * 64); // 设置发送缓冲区
+            sc.socket().connect(remote, timeoutMillis); // 连接
             sc.configureBlocking(false);
             return sc;
         } catch (Exception e) {

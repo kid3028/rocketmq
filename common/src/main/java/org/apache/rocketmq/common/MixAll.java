@@ -16,33 +16,20 @@
  */
 package org.apache.rocketmq.common;
 
-import java.io.ByteArrayInputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.InputStream;
-import java.lang.annotation.Annotation;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
-import java.net.Inet6Address;
-import java.net.InetAddress;
-import java.net.NetworkInterface;
-import java.net.SocketException;
-import java.net.URL;
-import java.net.URLConnection;
-import java.util.ArrayList;
-import java.util.Enumeration;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
-import java.util.concurrent.atomic.AtomicLong;
 import org.apache.rocketmq.common.annotation.ImportantField;
 import org.apache.rocketmq.common.constant.LoggerName;
 import org.apache.rocketmq.common.help.FAQUrl;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
+
+import java.io.*;
+import java.lang.annotation.Annotation;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.net.*;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class MixAll {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.COMMON_LOGGER_NAME);
@@ -235,16 +222,27 @@ public class MixAll {
         printObjectProperties(logger, object, false);
     }
 
+    /**
+     * 将配置类属性值进行输出
+     * @param logger
+     * @param object
+     * @param onlyImportantField
+     */
     public static void printObjectProperties(final InternalLogger logger, final Object object,
         final boolean onlyImportantField) {
+        // 获取到该类下的所有属性
         Field[] fields = object.getClass().getDeclaredFields();
         for (Field field : fields) {
+            // 拿到非静态属性
             if (!Modifier.isStatic(field.getModifiers())) {
+                // 属性名
                 String name = field.getName();
                 if (!name.startsWith("this")) {
                     Object value = null;
                     try {
+                        // 修改访问权限为public
                         field.setAccessible(true);
+                        // 获取到属性值
                         value = field.get(object);
                         if (null == value) {
                             value = "";
@@ -259,7 +257,7 @@ public class MixAll {
                             continue;
                         }
                     }
-
+                    // 输出属性
                     if (logger != null) {
                         logger.info(name + "=" + value);
                     } else {
@@ -318,20 +316,31 @@ public class MixAll {
         return properties;
     }
 
+    /**
+     * 将配置文件中的配置转化为类属性值
+     * @param p
+     * @param object
+     */
     public static void properties2Object(final Properties p, final Object object) {
+        // 获取到指定对象的所有方法
         Method[] methods = object.getClass().getMethods();
         for (Method method : methods) {
             String mn = method.getName();
+            // 过滤到set方法
             if (mn.startsWith("set")) {
                 try {
                     String tmp = mn.substring(4);
                     String first = mn.substring(3, 4);
-
+                    // 截取掉前面的set前缀后拼接得到到属性
                     String key = first.toLowerCase() + tmp;
+                    // 从配置文件中尝试获取属性
                     String property = p.getProperty(key);
+                    // 获取到属性
                     if (property != null) {
+                        // 获取该属性set方法的参数列表clazz
                         Class<?>[] pt = method.getParameterTypes();
                         if (pt != null && pt.length > 0) {
+                            // 对一个参数进行类型判断
                             String cn = pt[0].getSimpleName();
                             Object arg = null;
                             if (cn.equals("int") || cn.equals("Integer")) {
@@ -349,6 +358,7 @@ public class MixAll {
                             } else {
                                 continue;
                             }
+                            // 调用set方法进行设值
                             method.invoke(object, arg);
                         }
                     }

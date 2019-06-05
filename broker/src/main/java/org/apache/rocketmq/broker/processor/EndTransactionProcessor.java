@@ -39,6 +39,17 @@ import org.apache.rocketmq.store.PutMessageResult;
 import org.apache.rocketmq.store.config.BrokerRole;
 
 /**
+ * broker决定消息是否可以投递
+ *    1.收到消息之后先检查是否是事务类型的消息，不是事务消息直接返回
+ *    2.根据header中的offset查询half消息，查不到直接返回，不作处理
+ *    3.根据half消息构造新的消息，新构造的这个消息会被重新写入commitLog，如果是rollback消息则body为空
+ *    4.如果是rollback消息的话，该消息不会被投递，原因和half不会被投递的原因是一样的，只有commit消息broker才会投递给consumer
+ *
+ * 即对于commit和rollback都会新写一个消息到CommitLog，只是rollback的消息的body是空的，而且该消息和half消息一样不会被投递，
+ * 直到commitLog删除过期消息，会从磁盘中删除，但是commit的时候，会重新封装half消息并投递给consumer消费
+ *
+ * 之后commit消息将会被consumer消费到。事务消息consumer端的消费方式和普通消息是一样的，RocketMQ能保证消息能被consumer收到，并且可以消息重试等。
+ * 如果consumer消费失败，那么交由人工处理，这种情况出现的概率很低
  * EndTransaction processor: process commit and rollback message
  */
 public class EndTransactionProcessor implements NettyRequestProcessor {

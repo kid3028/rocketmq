@@ -145,6 +145,20 @@ public class Message implements Serializable {
         return 0;
     }
 
+    /**
+     * 设置延迟等级，向message添加DELAY属性，后面broker处理延迟消息就依赖该属性进行特别的处理
+     * 用户在发送消息的时候可以指定延时等级，然后在指定延迟时间之后投递消息，然后被consumer消费
+     *
+     * 一个延时消息被发出到消费成功经历以下几个过程：
+     *    1.设置消息的延时级别delayLevel
+     *    2.producer发送消息
+     *    3.broker收到消息在准备将消息写入存储的时候，判断是延时消息则更正Message的Topic为延时消息队列的topic，也就是将消息投递到延时消息队列
+     *    4.有定时任务从延迟队里读取消息，拿到消息后判断是否达到延时时间，如果到了延时时间则修改topic为原始topic，并将消息投递到原始topic队列
+     *    5.consumer像消费其他消息一样从broker拉取消息进行消费
+     *    6.批量消息是不支持延时消息的
+     *
+     * @param level
+     */
     public void setDelayTimeLevel(int level) {
         this.putProperty(MessageConst.PROPERTY_DELAY_TIME_LEVEL, String.valueOf(level));
     }

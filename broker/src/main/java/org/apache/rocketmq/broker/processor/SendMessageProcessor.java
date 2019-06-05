@@ -95,6 +95,38 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             this.brokerController.getMessageStore().isTransientStorePoolDeficient();
     }
 
+    /**
+     * broker接收到重试消息
+     *
+     *  1.检查是否配置了重试的消息队里，队里是否可写
+     *  2.查询原始消息
+     *  3.判断是否超过了最大重试次数或者delayLevel小于0，消息不会被重试，而是被投递到死信队列(不会再被消费)，Topic是%DLQ%+group
+     *  4.如果delayLevel是0,0表示会被延迟10s(如果是默认的延迟等级)
+     *  5.根据原始消息构造信息保存，差异字段为：
+     *     1.topic：%RETRY%+group
+     *     2.reconsumeTimes:原来的reconsumeTimes+1，也就是说每重试一次就+1
+     *     3.queueId：使用新的Topic的queueId
+     *     4.新增properties：ORIGIN_MESSAGE_ID , RETRY_TOPIC(如果原来没有的话)
+     *
+     * consumer拉取重试的消息
+     * 按照正常的消息消费流程，消息保存在broker只够，consumer就可以拉取消费了，和普通消息不同的是拉取消息的并不是consumer
+     * 本来订阅的topic，而是%RETRY%+group。
+     * 这里一直默认一开始retryTopic本身就存在，retryTopic的来源即创建时机有下面几个：
+     *     1.consumer启动之后会向broker发送heartbeat数据，如果broker没有对应的SubscriptionGroupConfig信息，会创建对应
+     *        topic的retryTopic：org.apache.rocketmq.broker.processor.ClientManageProcessor#heartBeat(io.netty.channel.ChannelHandlerContext, org.apache.rocketmq.remoting.protocol.RemotingCommand)
+     *     2.broker在接收到consumer发送回来的重试的时候，如果还没有创建retryTopic的topicConfig配置，则会新建：
+     *        org.apache.rocketmq.broker.processor.AbstractSendMessageProcessor#msgCheck(io.netty.channel.ChannelHandlerContext, org.apache.rocketmq.common.protocol.header.SendMessageRequestHeader, org.apache.rocketmq.remoting.protocol.RemotingCommand)
+     *     3.broker在处理consumer发送回来的重试消息的时候会创建retryTopic：org.apache.rocketmq.broker.processor.SendMessageProcessor#consumerSendMsgBack(io.netty.channel.ChannelHandlerContext, org.apache.rocketmq.remoting.protocol.RemotingCommand)
+     * broker创建retryTopic之后，和正常的topic配置一样同步到Namesrv，然后consumer就可以从namesrv获取到retryTopic的配置了。
+     * 所以consumer会拉取%RETRY%+group对应的消息：
+     *    1.consumer发送重试消息给broker以后，broker存储在新的retryTopic下，作为一个新的topic，consumer会拉取这个新的topic的消息
+     *    2.consumer拉取到这个retryTopic的消息之后再把topic换成原来的topic，然后交给consumer的listener处理
+     *
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     private RemotingCommand consumerSendMsgBack(final ChannelHandlerContext ctx, final RemotingCommand request)
         throws RemotingCommandException {
         final RemotingCommand response = RemotingCommand.createResponseCommand(null);

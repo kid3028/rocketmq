@@ -16,9 +16,6 @@
  */
 package org.apache.rocketmq.client.producer;
 
-import java.util.Collection;
-import java.util.List;
-import java.util.concurrent.ExecutorService;
 import org.apache.rocketmq.client.ClientConfig;
 import org.apache.rocketmq.client.QueryResult;
 import org.apache.rocketmq.client.Validators;
@@ -26,16 +23,14 @@ import org.apache.rocketmq.client.exception.MQBrokerException;
 import org.apache.rocketmq.client.exception.MQClientException;
 import org.apache.rocketmq.client.impl.producer.DefaultMQProducerImpl;
 import org.apache.rocketmq.common.MixAll;
-import org.apache.rocketmq.common.message.Message;
-import org.apache.rocketmq.common.message.MessageBatch;
-import org.apache.rocketmq.common.message.MessageClientIDSetter;
-import org.apache.rocketmq.common.message.MessageDecoder;
-import org.apache.rocketmq.common.message.MessageExt;
-import org.apache.rocketmq.common.message.MessageId;
-import org.apache.rocketmq.common.message.MessageQueue;
+import org.apache.rocketmq.common.message.*;
 import org.apache.rocketmq.remoting.RPCHook;
 import org.apache.rocketmq.remoting.exception.RemotingException;
 import org.apache.rocketmq.remoting.netty.NettyRemotingClient;
+
+import java.util.Collection;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
 
 /**
  * This class is the entry point for applications intending to send messages.
@@ -62,15 +57,17 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     protected final transient DefaultMQProducerImpl defaultMQProducerImpl;
 
     /**
+     * 生产者组在概念上吧具有完全相同的角色的生产者聚合在一起，这一点对于涉及事务消息时是非常重要的。
      * Producer group conceptually aggregates all producer instances of exactly same role, which is particularly
      * important when transactional messages are involved.
      * </p>
-     *
+     * 对于非事务消息，只要他在进程之中是唯一的即可
      * For non-transactional messages, it does not matter as long as it's unique per process.
      * </p>
      *
      * See {@linktourl http://rocketmq.apache.org/docs/core-concept/} for more discussion.
      */
+
     private String producerGroup;
 
     /**
@@ -79,29 +76,34 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     private String createTopicKey = MixAll.AUTO_CREATE_TOPIC_KEY_TOPIC;
 
     /**
+     * 默认每个topic下有4个队列
      * Number of queues to create per default topic.
      */
     private volatile int defaultTopicQueueNums = 4;
 
     /**
+     * 默认延迟
      * Timeout for sending messages.
      */
     private int sendMsgTimeout = 3000;
 
     /**
+     * 压缩消息的阈值，当消息大小超过4k将会被压缩
      * Compress message body threshold, namely, message body larger than 4k will be compressed on default.
      */
     private int compressMsgBodyOverHowmuch = 1024 * 4;
 
     /**
+     * 当同步模式下消息发送失败时，系统内部最大重试次数
      * Maximum number of retry to perform internally before claiming sending failure in synchronous mode.
      * </p>
-     *
+     * 这个可能会造成消息重复，这点可以由应用开发者来解决
      * This may potentially cause message duplication which is up to application developers to resolve.
      */
     private int retryTimesWhenSendFailed = 2;
 
     /**
+     * 当异步模式下消息发送失败，系统内部最大重试次数
      * Maximum number of retry to perform internally before claiming sending failure in asynchronous mode.
      * </p>
      *
@@ -110,11 +112,13 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     private int retryTimesWhenSendAsyncFailed = 2;
 
     /**
+     * 当消息发送失败时，是否重试其他broker
      * Indicate whether to retry another broker on sending failure internally.
      */
     private boolean retryAnotherBrokerWhenNotStoreOK = false;
 
     /**
+     * 允许的最大消息大小 4m
      * Maximum allowed message size in bytes.
      */
     private int maxMessageSize = 1024 * 1024 * 4; // 4M
@@ -156,10 +160,12 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     }
 
     /**
+     * 启动生产者实例
      * Start this producer instance.
      * </p>
      *
      * <strong>
+     *  许多的关于producer初始化操作将会执行，所以在发送或者查询消息之前，必须调用这个方法
      * Much internal initializing procedures are carried out to make this instance prepared, thus, it's a must to invoke
      * this method before sending or querying messages.
      * </strong>
@@ -173,6 +179,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     }
 
     /**
+     * 关闭producer实例，并释放相关资源
      * This method shuts down this producer instance and releases related resources.
      */
     @Override
@@ -181,6 +188,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     }
 
     /**
+     * 获取topic下的messageQueue
      * Fetch message queues of topic <code>topic</code>, to which we may send/publish messages.
      *
      * @param topic Topic to fetch.

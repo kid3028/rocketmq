@@ -17,24 +17,11 @@
 package org.apache.rocketmq.namesrv.routeinfo;
 
 import io.netty.channel.Channel;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Set;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 import org.apache.rocketmq.common.DataVersion;
 import org.apache.rocketmq.common.MixAll;
 import org.apache.rocketmq.common.TopicConfig;
 import org.apache.rocketmq.common.constant.LoggerName;
 import org.apache.rocketmq.common.constant.PermName;
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.common.namesrv.RegisterBrokerResult;
 import org.apache.rocketmq.common.protocol.body.ClusterInfo;
 import org.apache.rocketmq.common.protocol.body.TopicConfigSerializeWrapper;
@@ -43,15 +30,36 @@ import org.apache.rocketmq.common.protocol.route.BrokerData;
 import org.apache.rocketmq.common.protocol.route.QueueData;
 import org.apache.rocketmq.common.protocol.route.TopicRouteData;
 import org.apache.rocketmq.common.sysflag.TopicSysFlag;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.remoting.common.RemotingUtil;
 
+import java.util.*;
+import java.util.Map.Entry;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+
+/**
+ * namesrv通过将broker注册来的信息构造成自己的数据结构
+ * 每个cluster有哪些broker set
+ * 每个broker set包括哪些broker，brokerId和broker的ip:port
+ * 每个broker的存活情况，根据每次broker上报上来的信息，清除可能下线的broker
+ * 每个topic的消息队列信息，几个读队列，几个写队列
+ *
+ * namesrv汇总所有broker的这些信息，然后供consumer和producer拉取
+ */
 public class RouteInfoManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
     private final static long BROKER_CHANNEL_EXPIRED_TIME = 1000 * 60 * 2;
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
+    // 每个topic下的queue信息，包括每个broker set中读写队列的个数，consumer消费消息和producer发送消息的路由信息都从这个数据结构中获取
     private final HashMap<String/* topic */, List<QueueData>> topicQueueTable;
+    // 每个broker set中的broker信息(set中有哪些broker，每个broker的brokerId、brokerAddr)
     private final HashMap<String/* brokerName */, BrokerData> brokerAddrTable;
+    // 每个cluster下的broker set信息，一个brokerName对应的broker set
     private final HashMap<String/* clusterName */, Set<String/* brokerName */>> clusterAddrTable;
+    // 每个broker的存活情况
     private final HashMap<String/* brokerAddr */, BrokerLiveInfo> brokerLiveTable;
     private final HashMap<String/* brokerAddr */, List<String>/* Filter Server */> filterServerTable;
 
@@ -99,6 +107,18 @@ public class RouteInfoManager {
         return topicList.encode();
     }
 
+    /**
+     * Namesrv处理broker注册请求
+     * @param clusterName
+     * @param brokerAddr
+     * @param brokerName
+     * @param brokerId
+     * @param haServerAddr
+     * @param topicConfigWrapper
+     * @param filterServerList
+     * @param channel
+     * @return
+     */
     public RegisterBrokerResult registerBroker(
         final String clusterName,
         final String brokerAddr,
@@ -112,27 +132,40 @@ public class RouteInfoManager {
         try {
             try {
                 this.lock.writeLock().lockInterruptibly();
+                // 获取该集群下所有broker
 
                 Set<String> brokerNames = this.clusterAddrTable.get(clusterName);
+                // 如果当前集群还没有broker注册信息，创建map存储该集群broker列表
                 if (null == brokerNames) {
                     brokerNames = new HashSet<String>();
                     this.clusterAddrTable.put(clusterName, brokerNames);
                 }
+                // 将注册的broker加入集群broker列表
                 brokerNames.add(brokerName);
 
                 boolean registerFirst = false;
 
+                // 如果从broker元数据列表中没有找到该broker的信息，说明broker是第一次注册
                 BrokerData brokerData = this.brokerAddrTable.get(brokerName);
                 if (null == brokerData) {
                     registerFirst = true;
+                    // 创建broker元数据
                     brokerData = new BrokerData(clusterName, brokerName, new HashMap<Long, String>());
+                    // 加入元数据列表
                     this.brokerAddrTable.put(brokerName, brokerData);
                 }
+
+                // 设置broker地址
                 String oldAddr = brokerData.getBrokerAddrs().put(brokerId, brokerAddr);
                 registerFirst = registerFirst || (null == oldAddr);
 
+                /**
+                 * 只有master才会创建queueData，因为只有master才包含了读写队列的信息
+                 * Slave没有自己独立的读写队列信息，Slave不会创建自己的queue信息，只是和master的读写队列信息一致
+                 */
                 if (null != topicConfigWrapper
                     && MixAll.MASTER_ID == brokerId) {
+                    // 配置修改或者第一次注册
                     if (this.isBrokerTopicConfigChanged(brokerAddr, topicConfigWrapper.getDataVersion())
                         || registerFirst) {
                         ConcurrentMap<String, TopicConfig> tcTable =
@@ -145,6 +178,9 @@ public class RouteInfoManager {
                     }
                 }
 
+                /**
+                 * broker的存活情况
+                 */
                 BrokerLiveInfo prevBrokerLiveInfo = this.brokerLiveTable.put(brokerAddr,
                     new BrokerLiveInfo(
                         System.currentTimeMillis(),
@@ -163,9 +199,13 @@ public class RouteInfoManager {
                     }
                 }
 
+                // 不是master
                 if (MixAll.MASTER_ID != brokerId) {
+                    // 获取到master地址
                     String masterAddr = brokerData.getBrokerAddrs().get(MixAll.MASTER_ID);
+                    // master存在
                     if (masterAddr != null) {
+                        // 获取到master相关信息 返回结果
                         BrokerLiveInfo brokerLiveInfo = this.brokerLiveTable.get(masterAddr);
                         if (brokerLiveInfo != null) {
                             result.setHaServerAddr(brokerLiveInfo.getHaServerAddr());
@@ -203,6 +243,11 @@ public class RouteInfoManager {
         }
     }
 
+    /**
+     * 创建或者更新broker信息
+     * @param brokerName
+     * @param topicConfig
+     */
     private void createAndUpdateQueueData(final String brokerName, final TopicConfig topicConfig) {
         QueueData queueData = new QueueData();
         queueData.setBrokerName(brokerName);
@@ -211,7 +256,9 @@ public class RouteInfoManager {
         queueData.setPerm(topicConfig.getPerm());
         queueData.setTopicSynFlag(topicConfig.getTopicSysFlag());
 
+        // 获取到topicName相关信息
         List<QueueData> queueDataList = this.topicQueueTable.get(topicConfig.getTopicName());
+        // topic下没有数据 新建的topic
         if (null == queueDataList) {
             queueDataList = new LinkedList<QueueData>();
             queueDataList.add(queueData);
@@ -223,9 +270,12 @@ public class RouteInfoManager {
             Iterator<QueueData> it = queueDataList.iterator();
             while (it.hasNext()) {
                 QueueData qd = it.next();
+                // 同一个topic下的队列
                 if (qd.getBrokerName().equals(brokerName)) {
+                    // 如果队列元数据相同，说明不是新增
                     if (qd.equals(queueData)) {
                         addNewOne = false;
+                        // 队列元数据信息不同，队列信息已经被修改，移除旧的队列
                     } else {
                         log.info("topic changed, {} OLD: {} NEW: {}", topicConfig.getTopicName(), qd,
                             queueData);
@@ -234,6 +284,7 @@ public class RouteInfoManager {
                 }
             }
 
+            // 新的队列信息(新增或者修改)
             if (addNewOne) {
                 queueDataList.add(queueData);
             }

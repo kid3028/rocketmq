@@ -25,6 +25,7 @@ import org.apache.rocketmq.remoting.annotation.CFNotNull;
 import org.apache.rocketmq.remoting.exception.RemotingCommandException;
 
 public class PullMessageResponseHeader implements CommandCustomHeader {
+    // 最后返回给consumer的建议的brokerId，最后会被存入字段org.apache.rocketmq.client.impl.consumer.PullAPIWrapper.pullFromWhichNodeTable
     @CFNotNull
     private Long suggestWhichBrokerId;
     @CFNotNull
@@ -66,6 +67,10 @@ public class PullMessageResponseHeader implements CommandCustomHeader {
         return suggestWhichBrokerId;
     }
 
+    /**
+     * 设置返回给consumer建议的brokerId
+     * @param suggestWhichBrokerId
+     */
     public void setSuggestWhichBrokerId(Long suggestWhichBrokerId) {
         this.suggestWhichBrokerId = suggestWhichBrokerId;
     }

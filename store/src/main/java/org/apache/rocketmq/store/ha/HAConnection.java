@@ -16,17 +16,18 @@
  */
 package org.apache.rocketmq.store.ha;
 
-import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.SelectionKey;
-import java.nio.channels.Selector;
-import java.nio.channels.SocketChannel;
 import org.apache.rocketmq.common.ServiceThread;
 import org.apache.rocketmq.common.constant.LoggerName;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.remoting.common.RemotingUtil;
 import org.apache.rocketmq.store.SelectMappedBufferResult;
+
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.Selector;
+import java.nio.channels.SocketChannel;
 
 public class HAConnection {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
@@ -93,6 +94,9 @@ public class HAConnection {
             this.thread.setDaemon(true);
         }
 
+        /**
+         * master处理slave发送来的数据
+         */
         @Override
         public void run() {
             HAConnection.log.info(this.getServiceName() + " service started");
@@ -145,6 +149,12 @@ public class HAConnection {
             return ReadSocketService.class.getSimpleName();
         }
 
+        /**
+         * slave发送给master的数据格式
+         *   offset(8个字节)：slave本地到的commitLog的maxOffset
+         * master收到slave上报的offset后进行处理
+         * @return
+         */
         private boolean processReadEvent() {
             int readSizeZeroTimes = 0;
 
@@ -163,13 +173,15 @@ public class HAConnection {
                             int pos = this.byteBufferRead.position() - (this.byteBufferRead.position() % 8);
                             long readOffset = this.byteBufferRead.getLong(pos - 8);
                             this.processPostion = pos;
-
+                            // slave上报过来的offset说明offset之前定的数据slave都已经收到
                             HAConnection.this.slaveAckOffset = readOffset;
                             if (HAConnection.this.slaveRequestOffset < 0) {
+                                // 如果是刚刚和slave建立连接，需要知道slave需要从哪里开始接收commitLog
                                 HAConnection.this.slaveRequestOffset = readOffset;
                                 log.info("slave[" + HAConnection.this.clientAddr + "] request offset " + readOffset);
                             }
 
+                            // 如果收到来自slave的确认之后，唤醒等待同步到Slave的线程(如果是SYNC_MASTER)
                             HAConnection.this.haService.notifyTransferSome(HAConnection.this.slaveAckOffset);
                         }
                     } else if (readSize == 0) {
@@ -215,12 +227,12 @@ public class HAConnection {
             while (!this.isStopped()) {
                 try {
                     this.selector.select(1000);
-
+                    // 说明还没收到来自slave的offset，等待10ms重试
                     if (-1 == HAConnection.this.slaveRequestOffset) {
                         Thread.sleep(10);
                         continue;
                     }
-
+                    // 如果是第一次发送数据需要计算从哪里开始给slave发送数据
                     if (-1 == this.nextTransferFromWhere) {
                         if (0 == HAConnection.this.slaveRequestOffset) {
                             long masterOffset = HAConnection.this.haService.getDefaultMessageStore().getCommitLog().getMaxOffset();
@@ -241,12 +253,12 @@ public class HAConnection {
                         log.info("master transfer data from " + this.nextTransferFromWhere + " to slave[" + HAConnection.this.clientAddr
                             + "], and slave request " + HAConnection.this.slaveRequestOffset);
                     }
-
+                    // 如果上一次transfer完成了才进行下一次transfer
                     if (this.lastWriteOver) {
 
                         long interval =
                             HAConnection.this.haService.getDefaultMessageStore().getSystemClock().now() - this.lastWriteTimestamp;
-
+                        // 可能是心跳检测？？？
                         if (interval > HAConnection.this.haService.getDefaultMessageStore().getMessageStoreConfig()
                             .getHaSendHeartbeatInterval()) {
 
@@ -262,6 +274,7 @@ public class HAConnection {
                                 continue;
                         }
                     } else {
+                        // 说明上一次的数据还没有传输完成，这里继续上一次的传输
                         this.lastWriteOver = this.transferData();
                         if (!this.lastWriteOver)
                             continue;
@@ -270,12 +283,14 @@ public class HAConnection {
                     SelectMappedBufferResult selectResult =
                         HAConnection.this.haService.getDefaultMessageStore().getCommitLogData(this.nextTransferFromWhere);
                     if (selectResult != null) {
+                        // 发送找到的MappedFile数据
                         int size = selectResult.getSize();
                         if (size > HAConnection.this.haService.getDefaultMessageStore().getMessageStoreConfig().getHaTransferBatchSize()) {
                             size = HAConnection.this.haService.getDefaultMessageStore().getMessageStoreConfig().getHaTransferBatchSize();
                         }
 
                         long thisOffset = this.nextTransferFromWhere;
+                        // 计算下次需要给slave发送数据的起始位置
                         this.nextTransferFromWhere += size;
 
                         selectResult.getByteBuffer().limit(size);
@@ -287,10 +302,10 @@ public class HAConnection {
                         this.byteBufferHeader.putLong(thisOffset);
                         this.byteBufferHeader.putInt(size);
                         this.byteBufferHeader.flip();
-
+                        // 向slave发送数据
                         this.lastWriteOver = this.transferData();
                     } else {
-
+                        // 如果没有需要给slave发送的数据，传输数据的线程等待100ms 或者 等待broker接收到新发来的消息的时候唤醒这个线程
                         HAConnection.this.haService.getWaitNotifyObject().allWaitForRunning(100);
                     }
                 } catch (Exception e) {
@@ -325,9 +340,15 @@ public class HAConnection {
             HAConnection.log.info(this.getServiceName() + " service end");
         }
 
+        /**
+         * 发送数据给slave 格式 : header(offset(8byte) + bodySize(4byte)) + body
+         * @return
+         * @throws Exception
+         */
         private boolean transferData() throws Exception {
             int writeSizeZeroTimes = 0;
             // Write Header
+            // 前面已经将需要发送的header数据放入ByteBufferHeader
             while (this.byteBufferHeader.hasRemaining()) {
                 int writeSize = this.socketChannel.write(this.byteBufferHeader);
                 if (writeSize > 0) {
@@ -350,6 +371,7 @@ public class HAConnection {
 
             // Write Body
             if (!this.byteBufferHeader.hasRemaining()) {
+                // selectMappedBufferResult里面存放的是需要发送的MappedFile数据
                 while (this.selectMappedBufferResult.getByteBuffer().hasRemaining()) {
                     int writeSize = this.socketChannel.write(this.selectMappedBufferResult.getByteBuffer());
                     if (writeSize > 0) {
@@ -368,11 +390,18 @@ public class HAConnection {
             boolean result = !this.byteBufferHeader.hasRemaining() && !this.selectMappedBufferResult.getByteBuffer().hasRemaining();
 
             if (!this.selectMappedBufferResult.getByteBuffer().hasRemaining()) {
+                // 每次发送完数据之后清空selectMappedBufferResult，保证下一次发送前selectMappedBufferResult=null
                 this.selectMappedBufferResult.release();
                 this.selectMappedBufferResult = null;
             }
 
             return result;
+            /**
+             * 到这里，master已经通过网络将MappedFile数据发送给了slave，接下来就是slave收到master的数据，然后保存到自己的commitLog。
+             * HAClient启动的时候向和master连接的socket上注册了read事件的selector，收到read事件之后，依次执行以下方法
+             * org.apache.rocketmq.store.ha.HAService.HAClient#processReadEvent()
+             * org.apache.rocketmq.store.ha.HAService.HAClient#dispatchReadRequest()
+             */
         }
 
         @Override
