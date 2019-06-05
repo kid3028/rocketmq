@@ -145,6 +145,9 @@ public class NamesrvController {
         return true;
     }
 
+    /**
+     * 注册默认的processor处理器
+     */
     private void registerProcessor() {
         if (namesrvConfig.isClusterTest()) {
 
@@ -156,20 +159,29 @@ public class NamesrvController {
         }
     }
 
+    /**
+     * 启动NameServer控制器
+     * @throws Exception
+     */
     public void start() throws Exception {
+        // 启动NettyServer
         this.remotingServer.start();
-
+        // 如果注册了文件监听，启动文件监听线程
         if (this.fileWatchService != null) {
             this.fileWatchService.start();
         }
     }
 
     public void shutdown() {
+        // 停止NettyRemotingServer
         this.remotingServer.shutdown();
+        // 停止remoting线程池
         this.remotingExecutor.shutdown();
+        // 停止定时任务
         this.scheduledExecutorService.shutdown();
 
         if (this.fileWatchService != null) {
+            // 停止SslContext监听器
             this.fileWatchService.shutdown();
         }
     }

@@ -187,6 +187,10 @@ public class NamesrvStartup {
         return controller;
     }
 
+    /**
+     * 停止NameServer控制器
+     * @param controller
+     */
     public static void shutdown(final NamesrvController controller) {
         controller.shutdown();
     }

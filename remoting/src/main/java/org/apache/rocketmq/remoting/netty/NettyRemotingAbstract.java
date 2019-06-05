@@ -22,19 +22,8 @@ import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslHandler;
-import java.net.SocketAddress;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map.Entry;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.remoting.ChannelEventListener;
 import org.apache.rocketmq.remoting.InvokeCallback;
 import org.apache.rocketmq.remoting.RPCHook;
@@ -45,10 +34,16 @@ import org.apache.rocketmq.remoting.common.ServiceThread;
 import org.apache.rocketmq.remoting.exception.RemotingSendRequestException;
 import org.apache.rocketmq.remoting.exception.RemotingTimeoutException;
 import org.apache.rocketmq.remoting.exception.RemotingTooMuchRequestException;
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
 import org.apache.rocketmq.remoting.protocol.RemotingSysResponseCode;
+
+import java.net.SocketAddress;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map.Entry;
+import java.util.concurrent.*;
 
 public abstract class NettyRemotingAbstract {
 
@@ -58,6 +53,7 @@ public abstract class NettyRemotingAbstract {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(RemotingHelper.ROCKETMQ_REMOTING);
 
     /**
+     * 信号量限制正在进行的单向请求的最大数量，从而保护系统内存占用。
      * Semaphore to limit maximum number of on-going one-way requests, which protects system memory footprint.
      */
     protected final Semaphore semaphoreOneway;
@@ -74,6 +70,8 @@ public abstract class NettyRemotingAbstract {
         new ConcurrentHashMap<Integer, ResponseFuture>(256);
 
     /**
+     * 请求处理器映射表默认是空的，所有请求都会通过默认的请求处理器defaultRequestProcessor来处理，在NameServer启动的时候，
+     * defaultRequestProcessor的注册实在NameServerController.initialize方法中完成的。默认的请求处理的类型是DefaultRequestProcessor
      * This container holds all processors per request code, aka, for each incoming request, we may look up the
      * responding processor in this map to handle the request.
      */
@@ -165,7 +163,9 @@ public abstract class NettyRemotingAbstract {
      * @param cmd request command.
      */
     public void processRequestCommand(final ChannelHandlerContext ctx, final RemotingCommand cmd) {
+        // 根据request code从processor映射中获取processor处理器
         final Pair<NettyRequestProcessor, ExecutorService> matched = this.processorTable.get(cmd.getCode());
+        // 如果没有匹配到则使用默认的defaultRequestProcessor，defaultRequestProcessor在 NameServer启动流程中进行了初始化 NamesrvController#initializer() --> org.apache.rocketmq.namesrv.NamesrvController.registerProcessor
         final Pair<NettyRequestProcessor, ExecutorService> pair = null == matched ? this.defaultRequestProcessor : matched;
         final int opaque = cmd.getOpaque();
 
@@ -176,17 +176,20 @@ public abstract class NettyRemotingAbstract {
                     try {
                         RPCHook rpcHook = NettyRemotingAbstract.this.getRPCHook();
                         if (rpcHook != null) {
+                            // 请求处理之前的扩展钩子调用，我们可以通过实现RPCHook来自定义处理逻辑，NameServer默认没有实现RPCHook
                             rpcHook.doBeforeRequest(RemotingHelper.parseChannelRemoteAddr(ctx.channel()), cmd);
                         }
-
+                        // 请求处理
                         final RemotingCommand response = pair.getObject1().processRequest(ctx, cmd);
                         if (rpcHook != null) {
+                            // 请求处理之后的扩展钩子调用
                             rpcHook.doAfterResponse(RemotingHelper.parseChannelRemoteAddr(ctx.channel()), cmd, response);
                         }
-
+                        // 如果不是单向请求需要发送响应
                         if (!cmd.isOnewayRPC()) {
                             if (response != null) {
                                 response.setOpaque(opaque);
+                                // 设置command为响应类型
                                 response.markResponseType();
                                 try {
                                     ctx.writeAndFlush(response);
@@ -212,8 +215,9 @@ public abstract class NettyRemotingAbstract {
                     }
                 }
             };
-
+            // 判断processor是否拒接请求
             if (pair.getObject1().rejectRequest()) {
+                // 响应系统繁忙
                 final RemotingCommand response = RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_BUSY,
                     "[REJECTREQUEST]system busy, start flow control for a while");
                 response.setOpaque(opaque);
@@ -222,7 +226,9 @@ public abstract class NettyRemotingAbstract {
             }
 
             try {
+                // 构建请求处理任务
                 final RequestTask requestTask = new RequestTask(run, ctx.channel(), cmd);
+                // 使用processor对应的线程池来处理任务
                 pair.getObject2().submit(requestTask);
             } catch (RejectedExecutionException e) {
                 if ((System.currentTimeMillis() % 10000) == 0) {
@@ -232,6 +238,7 @@ public abstract class NettyRemotingAbstract {
                         + " request code: " + cmd.getCode());
                 }
 
+                // 如果处理的线程池因为饱和策略抛出了RejectExecutionException，非单向的请求响应系统繁忙
                 if (!cmd.isOnewayRPC()) {
                     final RemotingCommand response = RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_BUSY,
                         "[OVERLOAD]system busy, start flow control for a while");
@@ -241,6 +248,7 @@ public abstract class NettyRemotingAbstract {
             }
         } else {
             String error = " request type " + cmd.getCode() + " not supported";
+            // 如果没有获取到请求处理器，响应request code不支持
             final RemotingCommand response =
                 RemotingCommand.createResponseCommand(RemotingSysResponseCode.REQUEST_CODE_NOT_SUPPORTED, error);
             response.setOpaque(opaque);
@@ -276,10 +284,12 @@ public abstract class NettyRemotingAbstract {
     }
 
     /**
+     * 在回调执行器中执行回调，如果回调执行器为null，或者执行出现异常，则直接在当前线程中执行
      * Execute callback in callback executor. If callback executor is null, run directly in current thread
      */
     private void executeInvokeCallback(final ResponseFuture responseFuture) {
         boolean runInThisThread = false;
+        // 获取到回调执行器
         ExecutorService executor = this.getCallbackExecutor();
         if (executor != null) {
             try {
@@ -287,6 +297,7 @@ public abstract class NettyRemotingAbstract {
                     @Override
                     public void run() {
                         try {
+                            // 执行回调
                             responseFuture.executeInvokeCallback();
                         } catch (Throwable e) {
                             log.warn("execute callback in executor exception, and callback throw", e);
@@ -330,20 +341,27 @@ public abstract class NettyRemotingAbstract {
     public abstract ExecutorService getCallbackExecutor();
 
     /**
+     * 定期扫描和过期掉已弃用的请求
      * <p>
      * This method is periodically invoked to scan and expire deprecated request.
      * </p>
      */
     public void scanResponseTable() {
+        // 记录所有移除的请求
         final List<ResponseFuture> rfList = new LinkedList<ResponseFuture>();
+        // responseTable缓存所有正在进行的请求
         Iterator<Entry<Integer, ResponseFuture>> it = this.responseTable.entrySet().iterator();
         while (it.hasNext()) {
             Entry<Integer, ResponseFuture> next = it.next();
             ResponseFuture rep = next.getValue();
 
+            // 判断请求是否过期
             if ((rep.getBeginTimestamp() + rep.getTimeoutMillis() + 1000) <= System.currentTimeMillis()) {
+                // 释放信号量
                 rep.release();
+                // 移除当前请求
                 it.remove();
+                // 添加到移除请求列表中
                 rfList.add(rep);
                 log.warn("remove timeout request, " + rep);
             }
@@ -351,6 +369,7 @@ public abstract class NettyRemotingAbstract {
 
         for (ResponseFuture rf : rfList) {
             try {
+                // 在回调执行器中执行回调，如果回调执行器为null，则直接在当前线程中执行
                 executeInvokeCallback(rf);
             } catch (Throwable e) {
                 log.warn("scanResponseTable, operationComplete Exception", e);
