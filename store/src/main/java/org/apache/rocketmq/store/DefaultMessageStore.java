@@ -156,25 +156,37 @@ public class DefaultMessageStore implements MessageStore {
         boolean result = true;
 
         try {
+            // 判断~/store/abort文件是否存在，用于判断进程是否正常退出
             boolean lastExitOK = !this.isTempFileExist();
             log.info("last shutdown {}", lastExitOK ? "normally" : "abnormally");
 
             if (null != scheduleMessageService) {
+                /**
+                 * 加载文件~/store/config/delayOffset.json
+                 * 将默认的延迟时间"1s 5s 10s 30s 1m 2m 3m 4m 5m 6m 7m 8m 9m 10m 20m 30m 1h 2h"转化为对应的毫秒值
+                 */
                 result = result && this.scheduleMessageService.load();
             }
 
             // load Commit Log
+            // 加载~/store.commitlog目录下的所有文件，并标记每一个文件的写位置、刷新位置、提交位置(也就是commit log文件的大小，默认1G)
             result = result && this.commitLog.load();
 
             // load Consume Queue
+            /**
+             * 加载~/store/consumequeue目录下的所有文件
+             * 获取文件之后构建ConsumeQueue，并设置topic、queueId、ConsumeQueue三者之间的关系
+             * 同样标记每一个文件的写位置、刷新位置和提交位置
+             */
             result = result && this.loadConsumeQueue();
 
             if (result) {
+                // 加载~/store/checkpoint文件，主要用于确定物理消息、逻辑消息、索引消息三个时间戳
                 this.storeCheckpoint =
                     new StoreCheckpoint(StorePathConfigHelper.getStoreCheckpoint(this.messageStoreConfig.getStorePathRootDir()));
-
+                // 加载~/store/index目录下的索引文件
                 this.indexService.load(lastExitOK);
-
+                // 恢复动作
                 this.recover(lastExitOK);
 
                 log.info("load over, and the max phy offset = {}", this.getMaxPhyOffset());
@@ -185,6 +197,7 @@ public class DefaultMessageStore implements MessageStore {
         }
 
         if (!result) {
+            // 如果初始化失败则删除预先分配好的映射文件
             this.allocateMappedFileService.shutdown();
         }
 
@@ -1269,15 +1282,21 @@ public class DefaultMessageStore implements MessageStore {
         return true;
     }
 
+    /**
+     * 恢复动作
+     * @param lastExitOK
+     */
     private void recover(final boolean lastExitOK) {
+        // 恢复消费队列，确定消费队列的最大物理偏移量，对应~/store/consumequeue目录下面的内容
         this.recoverConsumeQueue();
 
+        // 根据上次进程退出的结果判断采取正常/异常commitlog恢复，对应~/store/commitlog目录下的内容
         if (lastExitOK) {
             this.commitLog.recoverNormally();
         } else {
             this.commitLog.recoverAbnormally();
         }
-
+        // 恢复topic队列
         this.recoverTopicQueueTable();
     }
 

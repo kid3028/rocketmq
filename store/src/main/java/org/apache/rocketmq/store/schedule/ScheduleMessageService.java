@@ -143,6 +143,10 @@ public class ScheduleMessageService extends ConfigManager {
         return this.encode(false);
     }
 
+    /**
+     * 将配置的延迟时间转化为对应的毫秒值
+     * @return
+     */
     public boolean load() {
         boolean result = super.load();
         result = result && this.parseDelayLevel();

@@ -16,16 +16,17 @@
  */
 package org.apache.rocketmq.srvutil;
 
+import org.apache.commons.cli.*;
+
 import java.util.Properties;
-import org.apache.commons.cli.CommandLine;
-import org.apache.commons.cli.CommandLineParser;
-import org.apache.commons.cli.HelpFormatter;
-import org.apache.commons.cli.Option;
-import org.apache.commons.cli.Options;
-import org.apache.commons.cli.ParseException;
 
 public class ServerUtil {
 
+    /**
+     * 构建命令行选项 添加 -h 帮助选项 -n namesrv地址
+     * @param options
+     * @return
+     */
     public static Options buildCommandlineOptions(final Options options) {
         Option opt = new Option("h", "help", false, "Print help");
         opt.setRequired(false);

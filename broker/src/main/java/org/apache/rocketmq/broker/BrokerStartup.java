@@ -54,6 +54,10 @@ public class BrokerStartup {
     public static String configFile = null;
     public static InternalLogger log;
 
+    /**
+     * broker 启动主类
+     * @param args
+     */
     public static void main(String[] args) {
         start(createBrokerController(args));
     }
@@ -91,16 +95,20 @@ public class BrokerStartup {
         System.setProperty(RemotingCommand.REMOTING_VERSION_KEY, Integer.toString(MQVersion.CURRENT_VERSION));
 
         if (null == System.getProperty(NettySystemConfig.COM_ROCKETMQ_REMOTING_SOCKET_SNDBUF_SIZE)) {
+            // 默认发送缓冲区大小
             NettySystemConfig.socketSndbufSize = 131072;
         }
 
         if (null == System.getProperty(NettySystemConfig.COM_ROCKETMQ_REMOTING_SOCKET_RCVBUF_SIZE)) {
+            // 默认接收缓冲区大小
             NettySystemConfig.socketRcvbufSize = 131072;
         }
 
         try {
             //PackageConflictDetect.detectFastjson();
+            // 构建命令行选项 添加 -h 帮助选项 -n namesrv地址
             Options options = ServerUtil.buildCommandlineOptions(new Options());
+            // 构建命令行选项 添加 -c 配置文件 -p 打印输出 -m 打印重要配置
             commandLine = ServerUtil.parseCmdLine("mqbroker", args, buildCommandlineOptions(options),
                 new PosixParser());
             if (null == commandLine) {
@@ -113,6 +121,7 @@ public class BrokerStartup {
 
             nettyClientConfig.setUseTLS(Boolean.parseBoolean(System.getProperty(TLS_ENABLE,
                 String.valueOf(TlsSystemConfig.tlsMode == TlsMode.ENFORCING))));
+            // 设置nettyServer启动在10911端口
             nettyServerConfig.setListenPort(10911);
             final MessageStoreConfig messageStoreConfig = new MessageStoreConfig();
 
@@ -121,6 +130,7 @@ public class BrokerStartup {
                 messageStoreConfig.setAccessMessageInMemoryMaxRatio(ratio);
             }
 
+            // -c 指定了配置文件
             if (commandLine.hasOption('c')) {
                 String file = commandLine.getOptionValue('c');
                 if (file != null) {
@@ -140,6 +150,7 @@ public class BrokerStartup {
                 }
             }
 
+            // 将命令行选项的完整名称(eg: -n --> namesrvAddr)对应的选项值设置到BrokerConfig的对应属性上
             MixAll.properties2Object(ServerUtil.commandLine2Properties(commandLine), brokerConfig);
 
             if (null == brokerConfig.getRocketmqHome()) {
@@ -147,6 +158,7 @@ public class BrokerStartup {
                 System.exit(-2);
             }
 
+            // 校验NameServer地址信息是否正确
             String namesrvAddr = brokerConfig.getNamesrvAddr();
             if (null != namesrvAddr) {
                 try {
@@ -162,6 +174,7 @@ public class BrokerStartup {
                 }
             }
 
+            // 检查brokerId
             switch (messageStoreConfig.getBrokerRole()) {
                 case ASYNC_MASTER:
                 case SYNC_MASTER:
@@ -178,13 +191,16 @@ public class BrokerStartup {
                     break;
             }
 
+            // 设置HA监听端口为nettyServer端口+1
             messageStoreConfig.setHaListenPort(nettyServerConfig.getListenPort() + 1);
+            // 日志相关
             LoggerContext lc = (LoggerContext) LoggerFactory.getILoggerFactory();
             JoranConfigurator configurator = new JoranConfigurator();
             configurator.setContext(lc);
             lc.reset();
             configurator.doConfigure(brokerConfig.getRocketmqHome() + "/conf/logback_broker.xml");
 
+            // -p选项打印所有的配置
             if (commandLine.hasOption('p')) {
                 InternalLogger console = InternalLoggerFactory.getLogger(LoggerName.BROKER_CONSOLE_NAME);
                 MixAll.printObjectProperties(console, brokerConfig);
@@ -192,6 +208,7 @@ public class BrokerStartup {
                 MixAll.printObjectProperties(console, nettyClientConfig);
                 MixAll.printObjectProperties(console, messageStoreConfig);
                 System.exit(0);
+            // -m选项打印所有的重要配置
             } else if (commandLine.hasOption('m')) {
                 InternalLogger console = InternalLoggerFactory.getLogger(LoggerName.BROKER_CONSOLE_NAME);
                 MixAll.printObjectProperties(console, brokerConfig, true);
@@ -201,6 +218,7 @@ public class BrokerStartup {
                 System.exit(0);
             }
 
+            // 日志打印BrokerConfig、NettyServerConfig、NettyClientConfig和MessageStoreConfig配置
             log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
             MixAll.printObjectProperties(log, brokerConfig);
             MixAll.printObjectProperties(log, nettyServerConfig);
@@ -213,14 +231,18 @@ public class BrokerStartup {
                 nettyClientConfig,
                 messageStoreConfig);
             // remember all configs to prevent discard
+            // 记住所有配置，以防被丢弃
             controller.getConfiguration().registerConfig(properties);
 
+            // 初始化BrokerController
             boolean initResult = controller.initialize();
             if (!initResult) {
+                // 初始化失败关闭BrokerController，主要是各种初始化时各种资源的回收和各种线程池的shutdown方法调用
                 controller.shutdown();
                 System.exit(-3);
             }
 
+            // 添加关闭钩子，在停止系统时关闭控制器
             Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
                 private volatile boolean hasShutdown = false;
                 private AtomicInteger shutdownTimes = new AtomicInteger(0);
@@ -259,6 +281,11 @@ public class BrokerStartup {
         System.setProperty("rocketmq.namesrv.domain.subgroup", rmqAddressServerSubGroup);
     }
 
+    /**
+     * 构建命令行选项 添加 -c 配置文件 -p 打印输出 -m 打印重要配置
+     * @param options
+     * @return
+     */
     private static Options buildCommandlineOptions(final Options options) {
         Option opt = new Option("c", "configFile", true, "Broker config properties file");
         opt.setRequired(false);
