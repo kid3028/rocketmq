@@ -62,9 +62,14 @@ public class BrokerStartup {
         start(createBrokerController(args));
     }
 
+    /**
+     * 启动broker
+     * @param controller
+     * @return
+     */
     public static BrokerController start(BrokerController controller) {
         try {
-
+            // 启动brokerController
             controller.start();
 
             String tip = "The broker[" + controller.getBrokerConfig().getBrokerName() + ", "

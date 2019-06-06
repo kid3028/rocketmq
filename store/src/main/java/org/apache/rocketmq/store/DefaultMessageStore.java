@@ -47,11 +47,37 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.apache.rocketmq.store.config.BrokerRole.SLAVE;
 
+/**
+ * Broker将消息存储抽象成MessageStore，DefaultMessageStore是默认实现
+ * 主要提供的功能：
+ *    1.保存消息，包括单条和批量保存
+ *    2.根据topic、queue、offset批量获取消息，consumer使用该方法拉取消息
+ *    3.根据消息offset读取消息详情，根据messageId查询消息时使用该方法
+ *    4.根据messageKey查询消息，可提供给终端用户使用
+ *
+ * MessageQueue数据结构图
+     * messageStore数据结构图：https://github.com/kid3028/imageRepository/blob/master/rocketmq/commitlog/messageStore%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84.png
+     * CommitLog:存储消息的详细信息，按照消息的收到的顺序，所有消息都存储在一起。每个消息存储后都会有一个offset，代表在commitLog中偏移量。
+     * 例如，当前commitLog文件的大小时12413435字节，那下一条消息到来后它的offset就是12413436。这个说法不是非常准确，但是offset大概就是这么计算来的。
+     * commitLog并不是一个文件，而是一系列的文件(图中的MappedFile)。每个文件的大小都是固定的(默认时1G)，写满一个会生成一个新的文件，新文件的文件名就是他存储的第一条消息的offset。
+     *
+     * ConsumeQueue:既然所有的消息都是存储在一个commitLog中，但是consumer时按照topic + queue的维度来消费消息的，没有办法直接直接从commitLog中读取，所以针对每个topic的每个queue都会
+     * 生成一个consumequeue文件。ConsumeQueue文件中存储的是消息在commitLog中的offset，可以理解为一个按Queue建立的索引，每条消息(图中cq)占用20字节(offset 8bytes + msgsize 4bytes + tagcode 8bytes)。
+     * 跟commitLog一样，每个Queue文件也是一系列连续的文件组成，每个文件默认存储30w个offset。
+     *
+     * IndexFile: CommitLog的另外一种形式的索引文件，只是索引的是MessageKey，每个MsgKey经过hash后计算存储的slot，然后将offset存储到indexFile的相应的slot上。根据msgKey来查询消息时，可以先到indexFile中查询offset，然后根据offset去commitLog中查询消息详情。
+     *
+ * 线程服务
+ *    线程服务：对数据做操作的相应服务。
+ *    IndexService：负责读写IndexFile的服务
+ *    ReputMessageService：消息存储到commitLog后，MessageStore的接口调用就直接返回了，后续由ReputMessageService负责将消息分发到ConsumeQueue和IndexService
+ *    HAService：负责将master-slave之间的消息数据同步
+ */
 public class DefaultMessageStore implements MessageStore {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
     private final MessageStoreConfig messageStoreConfig;
-    // CommitLog
+    // CommitLog 消息详情存储，同一个Broker上的所有消息都保存在一起，每条消息保存后都会有一个offset
     private final CommitLog commitLog;
 
     private final ConcurrentMap<String/* topic */, ConcurrentMap<Integer/* queueId */, ConsumeQueue>> consumeQueueTable;
@@ -209,7 +235,7 @@ public class DefaultMessageStore implements MessageStore {
      * @throws Exception
      */
     public void start() throws Exception {
-
+        // 写lock文件，尝试获取lock文件锁，保证磁盘上的文件只会被一个messageStore读写
         lock = lockFile.getChannel().tryLock(0, 1, false);
         if (lock == null || lock.isShared() || !lock.isValid()) {
             throw new RuntimeException("Lock failed,MQ already started");
@@ -218,14 +244,24 @@ public class DefaultMessageStore implements MessageStore {
         lockFile.getChannel().write(ByteBuffer.wrap("lock".getBytes()));
         lockFile.getChannel().force(true);
 
+        /**
+         * 启动FlushConsumeQueueService，是一个单线程的服务，定时将ConsumeQueue文件的数据刷新到磁盘，周期由参数flushIntervalConsumeQueue设置，默认是1s
+         *
+         * 数据写入文件之后，因为多级缓存的原因不会马上写到磁盘上，所以会有一个单独的线程定时调用flush，这里是flush ConsumeQueue文件。
+         * commitLog和IndexFile也有类似的逻辑
+         */
         this.flushConsumeQueueService.start();
+        // 启动commitLog CommitLogService只有在采用内存池缓存消息的时候才需要启动。在使用内存池的时候，这个服务会定时将内存池中的数据刷新到FileChannel中
         this.commitLog.start();
+        // 消息存储指标统计服务，RT，TPS等
         this.storeStatsService.start();
 
+        // 针对master，启动延时消息调度服务。如果消息消费失败，broker会延时重发。对于延时重发消息(topic=SCHEDULE_TOPIC_XXX)，这个服务负责检查是否有消息到了发送时间，到了时间则从延时队列中取出后重新发送
         if (this.scheduleMessageService != null && SLAVE != messageStoreConfig.getBrokerRole()) {
             this.scheduleMessageService.start();
         }
 
+        // 启动ReputMessageService，该服务负责将CommitLog中的消息offset记录到consumeQueue文件中
         if (this.getMessageStoreConfig().isDuplicationEnable()) {
             this.reputMessageService.setReputFromOffset(this.commitLog.getConfirmOffset());
         } else {
@@ -233,6 +269,7 @@ public class DefaultMessageStore implements MessageStore {
         }
         this.reputMessageService.start();
         /**
+         * 启动HAService，数据主从同步服务。如果是master，HAService默认监听10912端口，接收Slave的连接请求，然后将消息推送给slave，如果时slave则通过该服务连接到master接收数据
          * master与slave之间commitLog的HA传输
          * HAService.start()会启动相关的服务
          *    AcceptSocketService ：启动serverSocket并监听来自HAClient的连接
@@ -240,8 +277,14 @@ public class DefaultMessageStore implements MessageStore {
          *    HAClient：如果是slave，才会启动HAClient
          */
         this.haService.start();
-
+        //对于新的broker，初始化文件存储目录
         this.createTempFile();
+        /**
+         * 启动定时任务
+         *   1.定时清理过期的CommitLog、ConsumeQueue和IndexFile数据文件，默认文件写满后会保存72小时
+         *   2.定时自检commitLog和ConsumeQueue文件，校验文件是否完整。主要用于监控，不会做修复文件的动作
+         *   3.定时检查commitLog的lock时长(因为在write或者flush时候会lock)，如果lock的时间过长，则打印JVM堆栈，用于监控
+         */
         this.addScheduleTask();
         this.shutdown = false;
     }

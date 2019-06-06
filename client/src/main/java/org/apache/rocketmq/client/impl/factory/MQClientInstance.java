@@ -202,6 +202,10 @@ public class MQClientInstance {
         return mqList;
     }
 
+    /**
+     * 启动MQClientInstance
+     * @throws MQClientException
+     */
     public void start() throws MQClientException {
 
         synchronized (this) {
@@ -209,18 +213,31 @@ public class MQClientInstance {
                 case CREATE_JUST:
                     this.serviceState = ServiceState.START_FAILED;
                     // If not specified,looking address from name server
+                    // 如果没有指定NameServerAddr,尝试从http server获取NameServer地址。http server是可以配置的，这种方式非常适合有统一配置中心的系统
                     if (null == this.clientConfig.getNamesrvAddr()) {
                         this.mQClientAPIImpl.fetchNameServerAddr();
                     }
                     // Start request-response channel
+                    // 启动MQClientAPIImpl，初始化NettyClient
                     this.mQClientAPIImpl.start();
                     // Start various schedule tasks
+                    /**
+                     * 启动client的定时任务
+                     *   1.获取NameServer地址，这样这样可以动态切换NameServer的地址
+                     *   2.从NameServer更新topicRouteInfo，对于producer来说topic的路由信息是最重要的
+                     *   3.将缓存的broker信息和最新的topicRouteInfo做对比，清除已经下线的broker
+                     *   4.向broker发送心跳
+                     */
                     this.startScheduledTask();
+                    //////////////////////////////////
+                    // producer和consumer是共用MQClientInstance实现的，这里的初始化是consumer使用的
                     // Start pull service
                     this.pullMessageService.start();
                     // Start rebalance service
                     this.rebalanceService.start();
-                    // Start push service
+                    ////////////////////////////////
+
+                    // Start push service 这里应该是启动内置的producer
                     this.defaultMQProducer.getDefaultMQProducerImpl().start(false);
                     log.info("the client factory [{}] start OK", this.clientId);
                     this.serviceState = ServiceState.RUNNING;
@@ -569,7 +586,7 @@ public class MQClientInstance {
 
     /**
      * producer如何维护topic和messageQueue
-     * producer发送消息的时候，发往哪个broker是由MessageQueue决定的，所以需要清除producer发送消息时候的MessageQueue是怎么来的，
+     * producer发送消息的时候，发往哪个broker是由MessageQueue决定的，所以需要清楚producer发送消息时候的MessageQueue是怎么来的，
      * producer维护了一个topicPublishInfoTable, 里面包含了每个topic对应的MessageQueue，所以问题就变为了topicPublishInfoTable是怎么构造的
      * @param topic
      * @param isDefault
@@ -903,11 +920,17 @@ public class MQClientInstance {
         }
     }
 
+    /**
+     * 将producer注册到MQClientInstance中
+     * @param group
+     * @param producer
+     * @return
+     */
     public boolean registerProducer(final String group, final DefaultMQProducerImpl producer) {
         if (null == group || null == producer) {
             return false;
         }
-
+        // 如果已经有该GroupName的注册信息，不再进行注册
         MQProducerInner prev = this.producerTable.putIfAbsent(group, producer);
         if (prev != null) {
             log.warn("the producer group[{}] exist already.", group);

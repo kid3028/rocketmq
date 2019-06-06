@@ -90,7 +90,14 @@ public class CommitLog {
         return result;
     }
 
+    /**
+     * 启动commitLog服务
+     */
     public void start() {
+        /**
+         * 启动刷盘服务,负责将CommitLog的数据flush到磁盘，针对同步刷盘和异步刷盘，有两种实现方式
+         * org.apache.rocketmq.store.CommitLog#CommitLog(org.apache.rocketmq.store.DefaultMessageStore)
+         */
         this.flushCommitLogService.start();
 
         if (defaultMessageStore.getMessageStoreConfig().isTransientStorePoolEnable()) {

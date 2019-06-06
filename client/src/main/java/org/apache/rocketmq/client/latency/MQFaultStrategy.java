@@ -59,26 +59,35 @@ public class MQFaultStrategy {
 
     /**
      * 根据topic发布信息选择一个消息队列
+     *    producer为每个topic缓存了一个全局的index，每次发送之后+1，然后从所有Queue列表中选择index位置上的Queue，这样就实现了负载均衡的效果
+     *    如果开启了延时容错，则会考虑broker的可用性：
+     *      1.根据index全局找到Queue
+     *      2.如果根据延时容错判断Queue所在的broker当前可用，并且时第一次发送，或者时重试并且和上次用的broker是同一个，则使用这个Queue。
+     *        这里有两个逻辑，一个是broker的可用性是如何判断的，第二个是为什么重试的时候还要选上次的broker。
+     *        在发送的逻辑中，出现重试的情况可能为
      * @param tpInfo topic发布信息
      * @param lastBrokerName
      * @return
      */
     public MessageQueue selectOneMessageQueue(final TopicPublishInfo tpInfo, final String lastBrokerName) {
+        // 开启了延时容错
         if (this.sendLatencyFaultEnable) {
             try {
-                // 获取brokerName=lastBrokerName && 可用的一个消息队列
+                // 1.获取上次使用的Queue index + 1
                 int index = tpInfo.getSendWhichQueue().getAndIncrement();
                 for (int i = 0; i < tpInfo.getMessageQueueList().size(); i++) {
                     int pos = Math.abs(index++) % tpInfo.getMessageQueueList().size();
                     if (pos < 0)
                         pos = 0;
+                    // 2.找到一个对应的Queue
                     MessageQueue mq = tpInfo.getMessageQueueList().get(pos);
+                    // 3.如果queue对应的broker可用，则使用该broker
                     if (latencyFaultTolerance.isAvailable(mq.getBrokerName())) {
                         if (null == lastBrokerName || mq.getBrokerName().equals(lastBrokerName))
                             return mq;
                     }
                 }
-                // 选择一个相对好的broker，并获得其相对应的一个消息队列，不考虑队列的可用性
+                // 4.如果没有找到一个合适的broker，选择一个相对好的broker，并获得其相对应的一个消息队列，不考虑队列的可用性
                 final String notBestBroker = latencyFaultTolerance.pickOneAtLeast();
                 int writeQueueNums = tpInfo.getQueueIdByBroker(notBestBroker);
                 if (writeQueueNums > 0) {
@@ -94,10 +103,10 @@ public class MQFaultStrategy {
             } catch (Exception e) {
                 log.error("Error occurred when selecting message queue", e);
             }
-
+            // 5.如果以上都没有找到，则直接按顺序选择下一个
             return tpInfo.selectOneMessageQueue();
         }
-
+        // 6.未开启延时容错，直接按顺序选下一个
         return tpInfo.selectOneMessageQueue(lastBrokerName);
     }
 
