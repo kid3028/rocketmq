@@ -16,18 +16,22 @@
  */
 package org.apache.rocketmq.client.consumer.rebalance;
 
-import java.util.ArrayList;
-import java.util.List;
 import org.apache.rocketmq.client.consumer.AllocateMessageQueueStrategy;
 import org.apache.rocketmq.client.log.ClientLogger;
-import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.common.message.MessageQueue;
+import org.apache.rocketmq.logging.InternalLogger;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
+ * 系统默认使用AVG策略，就是将该topic所有queue按照broker和queueId从小到大做排列。按照consumer数量
+ * 平均分成几份，然后每个consumer分到一份，按照consumer排序后的顺序来领取
  * Average Hashing queue algorithm
  */
 public class AllocateMessageQueueAveragely implements AllocateMessageQueueStrategy {
     private final InternalLogger log = ClientLogger.getLog();
+
 
     @Override
     public List<MessageQueue> allocate(String consumerGroup, String currentCID, List<MessageQueue> mqAll,
@@ -53,11 +57,16 @@ public class AllocateMessageQueueAveragely implements AllocateMessageQueueStrate
 
         int index = cidAll.indexOf(currentCID);
         int mod = mqAll.size() % cidAll.size();
+        /**
+         * avg size计算方法，mq数量 <= consumer数量，size = 1，这个情况很少
+         * 否则size=mq数量/consumer数量，余数是几则前几个consumer的size+1，这样所有的queue都会有consumer消费
+         */
         int averageSize =
             mqAll.size() <= cidAll.size() ? 1 : (mod > 0 && index < mod ? mqAll.size() / cidAll.size()
                 + 1 : mqAll.size() / cidAll.size());
         int startIndex = (mod > 0 && index < mod) ? index * averageSize : index * averageSize + mod;
         int range = Math.min(averageSize, mqAll.size() - startIndex);
+        // 从第一个consumer开始分配，每个分avgSize个连续的Queue
         for (int i = 0; i < range; i++) {
             result.add(mqAll.get((startIndex + i) % mqAll.size()));
         }

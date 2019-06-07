@@ -59,12 +59,15 @@ public class MQFaultStrategy {
 
     /**
      * 根据topic发布信息选择一个消息队列
+     * queue的选择除了轮询之外，还可以通过broker的可用性
      *    producer为每个topic缓存了一个全局的index，每次发送之后+1，然后从所有Queue列表中选择index位置上的Queue，这样就实现了负载均衡的效果
      *    如果开启了延时容错，则会考虑broker的可用性：
      *      1.根据index全局找到Queue
      *      2.如果根据延时容错判断Queue所在的broker当前可用，并且时第一次发送，或者时重试并且和上次用的broker是同一个，则使用这个Queue。
      *        这里有两个逻辑，一个是broker的可用性是如何判断的，第二个是为什么重试的时候还要选上次的broker。
-     *        在发送的逻辑中，出现重试的情况可能为
+     *        在发送的逻辑中，出现重试的情况可能为:第一种：broker返回处理成功，但是store失败；第二种：broker返回失败
+     *        对于返回失败其实会直接更新broker为短时不可用状态，这个在第一个if条件就已经通不过；对于store失败的情况，说明broker当前是正常的，
+     *        重发还是发给同一个broker有利于防止消息重复。
      * @param tpInfo topic发布信息
      * @param lastBrokerName
      * @return
@@ -110,9 +113,18 @@ public class MQFaultStrategy {
         return tpInfo.selectOneMessageQueue(lastBrokerName);
     }
 
+    /**
+     * broker的延时控制策略
+     *   queue的选择除了轮询之外，还可以通过broker的可用性，在消息发送后会更新时间和发送状态到MQFaultStrategy
+     * @param brokerName
+     * @param currentLatency
+     * @param isolation
+     */
     public void updateFaultItem(final String brokerName, final long currentLatency, boolean isolation) {
         if (this.sendLatencyFaultEnable) {
+            // 根据发送结果，计算broker不可用时长
             long duration = computeNotAvailableDuration(isolation ? 30000 : currentLatency);
+            // 更新broker不可用时长
             this.latencyFaultTolerance.updateFaultItem(brokerName, currentLatency, duration);
         }
     }

@@ -38,6 +38,10 @@ import org.apache.rocketmq.remoting.common.RemotingHelper;
 import java.util.*;
 import java.util.concurrent.*;
 
+/**
+ * 消息处理
+ *    回调consumer启动时注册的Listener。无论Listener是否处理成功，消息都会从ProcessQueue中移除
+ */
 public class ConsumeMessageConcurrentlyService implements ConsumeMessageService {
     private static final InternalLogger log = ClientLogger.getLog();
     private final DefaultMQPushConsumerImpl defaultMQPushConsumerImpl;
@@ -301,7 +305,7 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
                 List<MessageExt> msgBackFailed = new ArrayList<MessageExt>(consumeRequest.getMsgs().size());
                 for (int i = ackIndex + 1; i < consumeRequest.getMsgs().size(); i++) {
                     MessageExt msg = consumeRequest.getMsgs().get(i);
-                    // 将消息发送会broker
+                    // 将消息发送会broker。消息处理失败后，consumer会将消息发送给broker，broker会根据重试次数来重新投递消息。
                     boolean result = this.sendMessageBack(msg, context);
                     if (!result) {
                         msg.setReconsumeTimes(msg.getReconsumeTimes() + 1);
@@ -319,6 +323,7 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
                 break;
         }
 
+        // 将消费前缓存的消息清除
         long offset = consumeRequest.getProcessQueue().removeMessage(consumeRequest.getMsgs());
         if (offset >= 0 && !consumeRequest.getProcessQueue().isDropped()) {
             // 更新消费进度

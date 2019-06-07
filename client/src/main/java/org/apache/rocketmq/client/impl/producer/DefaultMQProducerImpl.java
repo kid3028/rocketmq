@@ -715,6 +715,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         long beginStartTime = System.currentTimeMillis();
         // 获取broker地址
         String brokerAddr = this.mQClientFactory.findBrokerAddressInPublish(mq.getBrokerName());
+        // double check,如果地址为空，则从nameserver中再获取一次
         if (null == brokerAddr) {
             tryToFindTopicPublishInfo(mq.getTopic());
             brokerAddr = this.mQClientFactory.findBrokerAddressInPublish(mq.getBrokerName());
@@ -722,7 +723,11 @@ public class DefaultMQProducerImpl implements MQProducerInner {
 
         SendMessageContext context = null;
         if (brokerAddr != null) {
-            // 是否使用broker vip通道，broker会开启两个端口对外提供服务
+            /**
+             * 是否使用broker vip通道，broker会开启两个端口对外提供服务
+             * 默认启动VIP通道
+             * broker启动时会开启两个端口接收客户端数据，其中一个端口只接受producer消息， 不接受consumer的拉取请求，被称为VIP通道
+             */
             brokerAddr = MixAll.brokerVIPChannel(this.defaultMQProducer.isSendMessageWithVIPChannel(), brokerAddr);
 
             // 记录消息内容，下面逻辑可能改变消息内容，例如消息压缩
@@ -732,7 +737,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                 if (!(msg instanceof MessageBatch)) {
                     MessageClientIDSetter.setUniqID(msg); // 设置唯一编号
                 }
-                // 消息压缩
+                // 消息压缩，如果消息body过长，则压缩并设置标识位 4k开始压缩
                 int sysFlag = 0;
                 boolean msgBodyCompressed = false;
                 if (this.tryToCompressMessage(msg)) {
@@ -792,6 +797,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                 requestHeader.setReconsumeTimes(0);
                 requestHeader.setUnitMode(this.isUnitMode());
                 requestHeader.setBatch(msg instanceof MessageBatch);
+                // 要求重新发送的消息，设置重试次数进而延时时间
                 if (requestHeader.getTopic().startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
                     String reconsumeTimes = MessageAccessor.getReconsumeTime(msg);
                     if (reconsumeTimes != null) {

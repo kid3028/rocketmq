@@ -234,6 +234,14 @@ public class MQClientInstance {
                     // Start pull service
                     this.pullMessageService.start();
                     // Start rebalance service
+                    /**
+                     * rebalanceService的任务主要是调用rebalanceImpl，来给consumer重新调整和分配queue
+                     *    1.定时触发20s做一次rebalance
+                     *    2.接口触发：
+                     *      第一，收到broker的consumer list发生变化通知后需要重新做负载均衡，比如同一个group中新加入consumer或者consumer下线
+                     *      第二，consumer启动的时候。
+                     *    主要的消息读取逻辑都是由RebalanceImpl完成的，通过doRebalance来触发
+                     */
                     this.rebalanceService.start();
                     ////////////////////////////////
 
@@ -294,6 +302,7 @@ public class MQClientInstance {
             }
         }, 1000, this.clientConfig.getHeartbeatBrokerInterval(), TimeUnit.MILLISECONDS);
 
+        // consumer相关。保存消费进度，广播消息保存在本地，集群消息上传到所有的broker
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
@@ -306,6 +315,7 @@ public class MQClientInstance {
             }
         }, 1000 * 10, this.clientConfig.getPersistConsumerOffsetInterval(), TimeUnit.MILLISECONDS);
 
+        // 对于PushConsumer，根据负载调整本地处理消息的线程池corePool大小
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
