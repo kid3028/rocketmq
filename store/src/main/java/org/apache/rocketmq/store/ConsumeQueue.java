@@ -16,14 +16,22 @@
  */
 package org.apache.rocketmq.store;
 
-import java.io.File;
-import java.nio.ByteBuffer;
-import java.util.List;
 import org.apache.rocketmq.common.constant.LoggerName;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.store.config.StorePathConfigHelper;
 
+import java.io.File;
+import java.nio.ByteBuffer;
+import java.util.List;
+
+/**
+ * broker在收到消息后，通过messageStore将消息存储到commitLog中，但是consumer在消费消息的时候是按照topic+queue的维度来拉取消息的。
+ * 为了方便读取，MessageStore将commitLog中的消息的offset按照topic+queueId划分后，存储到不同的文件中，这就是consumeQueue。
+ * 底层存储与commitLog一样使用MappedFile，每个CQUnit的大小是固定的，存储了消息的offset、消息的size和tagcode。
+ * 存储tag是为了在consumer取到消息offset后，先根据tag做一次过滤。剩下的才需要到commitLog中去消息详情。
+ * MessageStore通过ReputMessageService将消息的offset写到ConsumeQueue中。
+ */
 public class ConsumeQueue {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
@@ -375,12 +383,23 @@ public class ConsumeQueue {
         return this.minLogicOffset / CQ_STORE_UNIT_SIZE;
     }
 
+    /**
+     * 调用put方法
+     * @param request
+     */
     public void putMessagePositionInfoWrapper(DispatchRequest request) {
+        // 写入重试次数，最多30次
         final int maxRetries = 30;
+        // 判断cq是否可写
         boolean canWrite = this.defaultMessageStore.getRunningFlags().isCQWriteable();
         for (int i = 0; i < maxRetries && canWrite; i++) {
             long tagsCode = request.getTagsCode();
             if (isExtWriteEnable()) {
+                /**
+                 * 如果需要些ext文件，则将消息的tagsCode写入
+                 * 将tagsCode和bitMap记录进CQExt文件中，这是一个过滤的扩展功能，采用的bloom过滤器先记录消息的bitMap，
+                 * 这样consumer来读取消息时小铜锅bloom过滤器判断是否有符合过滤条件的消息
+                  */
                 ConsumeQueueExt.CqExtUnit cqExtUnit = new ConsumeQueueExt.CqExtUnit();
                 cqExtUnit.setFilterBitMap(request.getBitMap());
                 cqExtUnit.setMsgStoreTime(request.getStoreTimestamp());
@@ -394,9 +413,11 @@ public class ConsumeQueue {
                         topic, queueId, request.getCommitLogOffset());
                 }
             }
+            // 写入cq文件
             boolean result = this.putMessagePositionInfo(request.getCommitLogOffset(),
                 request.getMsgSize(), tagsCode, request.getConsumeQueueOffset());
             if (result) {
+                // 记录check point
                 this.defaultMessageStore.getStoreCheckpoint().setLogicsMsgTimestamp(request.getStoreTimestamp());
                 return;
             } else {
@@ -417,6 +438,16 @@ public class ConsumeQueue {
         this.defaultMessageStore.getRunningFlags().makeLogicsQueueError();
     }
 
+    /**
+     * 将消息offset写入cq文件
+     * 写文件的逻辑和写CommitLog的逻辑是一样的，首先封装一个CQUtil，这里面offset占8个字节，消息size占用4个字节，tagcode占8个字节。
+     * 然后找到最后一个MappedFile，对于新建的文件，会有一个预热的动作，先将所有CQUnit初始化为0值，最后将Unit写入到文件中
+     * @param offset
+     * @param size
+     * @param tagsCode
+     * @param cqOffset
+     * @return
+     */
     private boolean putMessagePositionInfo(final long offset, final int size, final long tagsCode,
         final long cqOffset) {
 
@@ -424,6 +455,7 @@ public class ConsumeQueue {
             return true;
         }
 
+        // 一个CQUnit的大小是固定的20字节
         this.byteBufferIndex.flip();
         this.byteBufferIndex.limit(CQ_STORE_UNIT_SIZE);
         this.byteBufferIndex.putLong(offset);
@@ -432,9 +464,10 @@ public class ConsumeQueue {
 
         final long expectLogicOffset = cqOffset * CQ_STORE_UNIT_SIZE;
 
+        // 获取最后一个MappedFile
         MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile(expectLogicOffset);
         if (mappedFile != null) {
-
+            // 对新创建的文件，先将所有CQUnit初始化0值
             if (mappedFile.isFirstCreateInQueue() && cqOffset != 0 && mappedFile.getWrotePosition() == 0) {
                 this.minLogicOffset = expectLogicOffset;
                 this.mappedFileQueue.setFlushedWhere(expectLogicOffset);
@@ -465,6 +498,7 @@ public class ConsumeQueue {
                 }
             }
             this.maxPhysicOffset = offset;
+            // CQUnit写入文件中
             return mappedFile.appendMessage(this.byteBufferIndex.array());
         }
         return false;

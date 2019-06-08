@@ -16,11 +16,6 @@
  */
 package org.apache.rocketmq.broker.longpolling;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import org.apache.rocketmq.broker.BrokerController;
 import org.apache.rocketmq.common.ServiceThread;
 import org.apache.rocketmq.common.SystemClock;
@@ -28,6 +23,12 @@ import org.apache.rocketmq.common.constant.LoggerName;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.store.ConsumeQueueExt;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 public class PullRequestHoldService extends ServiceThread {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
@@ -41,7 +42,17 @@ public class PullRequestHoldService extends ServiceThread {
         this.brokerController = brokerController;
     }
 
+    /**
+     * hold住提交的pullRequest
+     *   pullRequest被放入一个以topic@queueId为key的Map队列中异步处理，任务被放入等待队列后，有两种情况会被执行：
+     *      1.定时
+     *      2.broker有新的消息达到
+     * @param topic
+     * @param queueId
+     * @param pullRequest
+     */
     public void suspendPullRequest(final String topic, final int queueId, final PullRequest pullRequest) {
+        // key = topic@queueId
         String key = this.buildKey(topic, queueId);
         ManyPullRequest mpr = this.pullRequestTable.get(key);
         if (null == mpr) {
@@ -51,7 +62,7 @@ public class PullRequestHoldService extends ServiceThread {
                 mpr = prev;
             }
         }
-
+        // 放入map队列中异步执行
         mpr.addPullRequest(pullRequest);
     }
 
@@ -63,6 +74,9 @@ public class PullRequestHoldService extends ServiceThread {
         return sb.toString();
     }
 
+    /**
+     * 遍历hold住pullRequest
+     */
     @Override
     public void run() {
         log.info("{} service started", this.getServiceName());
@@ -75,6 +89,7 @@ public class PullRequestHoldService extends ServiceThread {
                 }
 
                 long beginLockTimestamp = this.systemClock.now();
+                // 定期检查队列中request重新执行
                 this.checkHoldRequest();
                 long costTime = this.systemClock.now() - beginLockTimestamp;
                 if (costTime > 5 * 1000) {
@@ -93,6 +108,9 @@ public class PullRequestHoldService extends ServiceThread {
         return PullRequestHoldService.class.getSimpleName();
     }
 
+    /**
+     * 定时执行的检查操作
+     */
     private void checkHoldRequest() {
         for (String key : this.pullRequestTable.keySet()) {
             String[] kArray = key.split(TOPIC_QUEUEID_SEPARATOR);
@@ -113,22 +131,37 @@ public class PullRequestHoldService extends ServiceThread {
         notifyMessageArriving(topic, queueId, maxOffset, null, 0, null, null);
     }
 
+    /**
+     * 定时任务会定时调用该方法
+     * 当ReputMessageService发现有新消息时，也会调用该方法
+     * @param topic
+     * @param queueId
+     * @param maxOffset
+     * @param tagsCode
+     * @param msgStoreTime
+     * @param filterBitMap
+     * @param properties
+     */
     public void notifyMessageArriving(final String topic, final int queueId, final long maxOffset, final Long tagsCode,
         long msgStoreTime, byte[] filterBitMap, Map<String, String> properties) {
         String key = this.buildKey(topic, queueId);
         ManyPullRequest mpr = this.pullRequestTable.get(key);
         if (mpr != null) {
+            // clone等待的List，同时会清空等待列表，保证线程安全
             List<PullRequest> requestList = mpr.cloneListAndClear();
             if (requestList != null) {
                 List<PullRequest> replayList = new ArrayList<PullRequest>();
 
+                // 循环执行Request
                 for (PullRequest request : requestList) {
                     long newestOffset = maxOffset;
                     if (newestOffset <= request.getPullFromThisOffset()) {
                         newestOffset = this.brokerController.getMessageStore().getMaxOffsetInQueue(topic, queueId);
                     }
 
+                    // 判断等待的时间内有没有新的消息进来
                     if (newestOffset > request.getPullFromThisOffset()) {
+                        // 判断消息是否符合过滤条件，对于定时唤醒任务，match=true
                         boolean match = request.getMessageFilter().isMatchedByConsumeQueue(tagsCode,
                             new ConsumeQueueExt.CqExtUnit(tagsCode, msgStoreTime, filterBitMap));
                         // match by bit map, need eval again when properties is not null.
@@ -138,6 +171,7 @@ public class PullRequestHoldService extends ServiceThread {
 
                         if (match) {
                             try {
+                                // 消息符合request的过滤条件，重新通过PullRequestProcessor执行消息读取
                                 this.brokerController.getPullMessageProcessor().executeRequestWhenWakeup(request.getClientChannel(),
                                     request.getRequestCommand());
                             } catch (Throwable e) {
@@ -147,6 +181,7 @@ public class PullRequestHoldService extends ServiceThread {
                         }
                     }
 
+                    // 如果request等待超时，无论前一步是否符合条件，肯定会发送给processor
                     if (System.currentTimeMillis() >= (request.getSuspendTimestamp() + request.getTimeoutMillis())) {
                         try {
                             this.brokerController.getPullMessageProcessor().executeRequestWhenWakeup(request.getClientChannel(),
@@ -160,6 +195,7 @@ public class PullRequestHoldService extends ServiceThread {
                     replayList.add(request);
                 }
 
+                // 未超时和不符合过滤条件的request，重新加入队列等待
                 if (!replayList.isEmpty()) {
                     mpr.addPullRequest(replayList);
                 }

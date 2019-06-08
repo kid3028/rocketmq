@@ -16,23 +16,20 @@
  */
 package org.apache.rocketmq.client.impl.consumer;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
+import org.apache.rocketmq.client.consumer.DefaultMQPushConsumer;
+import org.apache.rocketmq.client.log.ClientLogger;
+import org.apache.rocketmq.common.message.MessageAccessor;
+import org.apache.rocketmq.common.message.MessageConst;
+import org.apache.rocketmq.common.message.MessageExt;
+import org.apache.rocketmq.common.protocol.body.ProcessQueueInfo;
+import org.apache.rocketmq.logging.InternalLogger;
+
+import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import org.apache.rocketmq.client.consumer.DefaultMQPushConsumer;
-import org.apache.rocketmq.client.log.ClientLogger;
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.common.message.MessageAccessor;
-import org.apache.rocketmq.common.message.MessageConst;
-import org.apache.rocketmq.common.message.MessageExt;
-import org.apache.rocketmq.common.protocol.body.ProcessQueueInfo;
 
 /**
  * Queue consumption snapshot
@@ -256,6 +253,12 @@ public class ProcessQueue {
         }
     }
 
+    /**
+     * 消费成功
+     *  1.清空临时的map
+     *  2.记录当前消费的offset
+     * @return
+     */
     public long commit() {
         try {
             this.lockTreeMap.writeLock().lockInterruptibly();
@@ -295,6 +298,11 @@ public class ProcessQueue {
         }
     }
 
+    /**
+     * 从processorQueue获取一批消息
+     * @param batchSize
+     * @return
+     */
     public List<MessageExt> takeMessags(final int batchSize) {
         List<MessageExt> result = new ArrayList<MessageExt>(batchSize);
         final long now = System.currentTimeMillis();

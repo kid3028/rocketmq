@@ -121,6 +121,10 @@ public class DefaultMQProducerImpl implements MQProducerInner {
             checkForbiddenHookList.size());
     }
 
+    /**
+     * 初始化事务环境
+     *   检查用户有没有设置executor，如果没有则默认初始化
+     */
     public void initTransactionEnv() {
         TransactionMQProducer producer = (TransactionMQProducer) this.defaultMQProducer;
         if (producer.getExecutorService() != null) {
@@ -744,7 +748,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                     sysFlag |= MessageSysFlag.COMPRESSED_FLAG;
                     msgBodyCompressed = true;
                 }
-                // 事务
+                // 事务 事务消息与普通消息的sysFlag不同
                 final String tranMsg = msg.getProperty(MessageConst.PROPERTY_TRANSACTION_PREPARED);
                 if (tranMsg != null && Boolean.parseBoolean(tranMsg)) {
                     sysFlag |= MessageSysFlag.TRANSACTION_PREPARED_TYPE;
@@ -1121,6 +1125,9 @@ public class DefaultMQProducerImpl implements MQProducerInner {
      * 为了保证broker收到的消息也是顺序的，所以producer只能向其中一个队列发送消息。因为只有是同一个队里才能保证消息是发往同一个broker到的，只有同一个broker处理发来的消息
      * 才能保证顺序消费。所以发送顺序消息的时候需要用户指定MessageQueue，在send调用过程中会调用下面的方案，下面的方法中回调了用户指定的select queue方法。
      * 这样每次发送的消息都是同一个MessageQueue，也就是都发送到同一个broker，这个发送消息的过程都保证了顺序，也就保证了broker存储在commitLog中的消息也是顺序的。
+     *
+     * 在普通消息的发送逻辑中，queue的选择会采用系统的负载均衡策略，默认是采用轮询的方式，同时会将broker的延时参数计算进去。
+     * 在顺序消息的发送逻辑中，queue的选择直接就是回调用户的实现，后面的逻辑就跟普通消息一模一样。
      * @param msg
      * @param selector
      * @param arg
@@ -1148,6 +1155,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         if (topicPublishInfo != null && topicPublishInfo.ok()) {
             MessageQueue mq = null;
             try {
+                // 使用用户自定义MessageSelector来选择queue
                 mq = selector.select(topicPublishInfo.getMessageQueueList(), msg, arg);
             } catch (Throwable e) {
                 throw new MQClientException("select message queue throwed exception.", e);
@@ -1263,6 +1271,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         if (null == tranExecuter) {
             throw new MQClientException("tranExecutor is null", null);
         }
+        // 消息校验
         Validators.checkMessage(msg, this.defaultMQProducer);
 
         SendResult sendResult = null;
@@ -1270,7 +1279,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         MessageAccessor.putProperty(msg, MessageConst.PROPERTY_TRANSACTION_PREPARED, "true");
         MessageAccessor.putProperty(msg, MessageConst.PROPERTY_PRODUCER_GROUP, this.defaultMQProducer.getProducerGroup());
         try {
-            // 发送half消息，该方法是同步发送，事务消息也必须是同步发送
+            // 发送half消息，该方法是同步发送，事务消息也必须是同步发送，和发送普通消息调用的是同一个方法。唯一针对事务消息的修改就是在sendKernelImpl中修改了消息sysFlag
             sendResult = this.send(msg);
         } catch (Exception e) {
             throw new MQClientException("send message Exception", e);
@@ -1309,6 +1318,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
             case FLUSH_DISK_TIMEOUT:
             case FLUSH_SLAVE_TIMEOUT:
             case SLAVE_NOT_AVAILABLE:
+                // 消息持久化失败，则事务回滚
                 localTransactionState = LocalTransactionState.ROLLBACK_MESSAGE;
                 break;
             default:
@@ -1387,10 +1397,11 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         }
 
         requestHeader.setProducerGroup(this.defaultMQProducer.getProducerGroup());
+        // 设置消息在broker上的queueOffset
         requestHeader.setTranStateTableOffset(sendResult.getQueueOffset());
         requestHeader.setMsgId(sendResult.getMsgId());
         String remark = localException != null ? ("executeLocalTransactionBranch exception: " + localException.toString()) : null;
-        // 发送这个消息是oneway的，也就是不会等待返回
+        // 发送这个消息是oneway的，也就是不会等待返回。oneway方式提交，也就是broker处理无论成功或者失败，producer不会再做处理。
         this.mQClientFactory.getMQClientAPIImpl().endTransactionOneway(brokerAddr, requestHeader, remark,
             this.defaultMQProducer.getSendMsgTimeout());
     }

@@ -53,6 +53,16 @@ import java.net.SocketAddress;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 消息接口
+ * broker提供的消息发送的接口有：单条消息、批量消息、RETRY消息。Retry消息即consumer消费失败，要求broker
+ * 重发的消息。失败的原因有两种，一种是业务端代码处理失败，还有一种是消息在consumer的缓存队列中待的时间超时，
+ * consumer会将消息从队列中移除，然后退回给broker重发。
+ *
+ * 消息处理流程
+ * producer或者consumer发送消息后，broker通过SendMessageProcessor做接收和处理，一个消息的包可以只包含
+ * 一条消息，也可以包含多条消息。
+ */
 public class SendMessageProcessor extends AbstractSendMessageProcessor implements NettyRequestProcessor {
 
     private List<ConsumeMessageHook> consumeMessageHookList;
@@ -324,11 +334,20 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         return true;
     }
 
+    /**
+     * 接收和处理单条消息
+     * @param ctx
+     * @param request
+     * @param sendMessageContext
+     * @param requestHeader
+     * @return
+     * @throws RemotingCommandException
+     */
     private RemotingCommand sendMessage(final ChannelHandlerContext ctx,
                                         final RemotingCommand request,
                                         final SendMessageContext sendMessageContext,
                                         final SendMessageRequestHeader requestHeader) throws RemotingCommandException {
-
+        // 构建response的header
         final RemotingCommand response = RemotingCommand.createResponseCommand(SendMessageResponseHeader.class);
         final SendMessageResponseHeader responseHeader = (SendMessageResponseHeader)response.readCustomHeader();
 
@@ -339,6 +358,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
 
         log.debug("receive SendMessage request command, {}", request);
 
+        // 判断当前时间broker是否提供服务，不提供则返回code为SYSTEM_ERROR的response
         final long startTimstamp = this.brokerController.getBrokerConfig().getStartAcceptSendRequestTimeStamp();
         if (this.brokerController.getMessageStore().now() < startTimstamp) {
             response.setCode(ResponseCode.SYSTEM_ERROR);
@@ -347,6 +367,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         }
 
         response.setCode(-1);
+        // 检查topic和queue，如果不存在且broker设置中允许自动创建，则自动创建，如果不支持自动创建，则返回错误
         super.msgCheck(ctx, requestHeader, response);
         if (response.getCode() != -1) {
             return response;
@@ -355,8 +376,10 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         final byte[] body = request.getBody();
 
         int queueIdInt = requestHeader.getQueueId();
+        // 获取topic配置
         TopicConfig topicConfig = this.brokerController.getTopicConfigManager().selectTopicConfig(requestHeader.getTopic());
 
+        // 如果消息中queueId小于0，则随机选取一个queue
         if (queueIdInt < 0) {
             queueIdInt = Math.abs(this.random.nextInt() % 99999999) % topicConfig.getWriteQueueNums();
         }
@@ -365,6 +388,12 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         msgInner.setTopic(requestHeader.getTopic());
         msgInner.setQueueId(queueIdInt);
 
+        /**
+         * 对于RETRY消息
+         *   1.判断是否consumer还存在，因为consumer将消息返回给broker之后，会设置一个延时时间，broker有一个定时任务在扫描到重发时间到了以后，
+         *   会调用processor，所以需要check一下调用的时候consumer还在不在
+         *   2.如果超过了最大重发次数，尝试创建DLQ，并将topic设置成DeadQueue，消息将被放入死信队列
+         */
         if (!handleRetryAndDLQ(requestHeader, response, request, msgInner, topicConfig)) {
             return response;
         }
@@ -381,6 +410,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         Map<String, String> oriProps = MessageDecoder.string2messageProperties(requestHeader.getProperties());
         String traFlag = oriProps.get(MessageConst.PROPERTY_TRANSACTION_PREPARED);
         if (traFlag != null && Boolean.parseBoolean(traFlag)) {
+            // 如果是事务消息，判断Broker是否支持事务消息
             if (this.brokerController.getBrokerConfig().isRejectTransactionMessage()) {
                 response.setCode(ResponseCode.NO_PERMISSION);
                 response.setRemark(
@@ -388,11 +418,14 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                         + "] sending transaction message is forbidden");
                 return response;
             }
+            // 存储prepare消息。在存储之前对消息做了转换，最后与普通消息一样调用MessageStore的方法来存储消息到commitLog
             putMessageResult = this.brokerController.getTransactionalMessageService().prepareMessage(msgInner);
         } else {
+            // 调用MessageStore接口存储消息
             putMessageResult = this.brokerController.getMessageStore().putMessage(msgInner);
         }
 
+        // 根据putResult设置response状态，更新broker统计信息，成功则回复producer，更新context上下文，如果失败则由外层统一的错误处理逻辑处理
         return handlePutMessageResult(putMessageResult, response, request, msgInner, responseHeader, sendMessageContext, ctx, queueIdInt);
 
     }

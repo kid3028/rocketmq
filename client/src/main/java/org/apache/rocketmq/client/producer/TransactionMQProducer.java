@@ -38,6 +38,10 @@ public class TransactionMQProducer extends DefaultMQProducer {
         super(producerGroup, rpcHook);
     }
 
+    /**
+     * 启动producer
+     * @throws MQClientException
+     */
     @Override
     public void start() throws MQClientException {
         this.defaultMQProducerImpl.initTransactionEnv();
@@ -50,8 +54,16 @@ public class TransactionMQProducer extends DefaultMQProducer {
         this.defaultMQProducerImpl.destroyTransactionEnv();
     }
 
+    /**
+     * 发送消息
+     * @param msg Transactional message to send.
+     * @param arg Argument used along with local transaction executor.
+     * @return
+     * @throws MQClientException
+     */
     @Override
     public TransactionSendResult sendMessageInTransaction(final Message msg, final Object arg) throws MQClientException {
+        // 检查TransactionListener是否存在
         if (null == this.transactionListener) {
             throw new MQClientException("TransactionListener is null", null);
         }

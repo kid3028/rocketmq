@@ -16,16 +16,6 @@
  */
 package org.apache.rocketmq.client.impl;
 
-import java.nio.ByteBuffer;
-import java.util.Collections;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Set;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
-
 import org.apache.rocketmq.client.QueryResult;
 import org.apache.rocketmq.client.exception.MQBrokerException;
 import org.apache.rocketmq.client.exception.MQClientException;
@@ -35,24 +25,29 @@ import org.apache.rocketmq.client.log.ClientLogger;
 import org.apache.rocketmq.common.MixAll;
 import org.apache.rocketmq.common.TopicConfig;
 import org.apache.rocketmq.common.help.FAQUrl;
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.common.message.MessageClientIDSetter;
-import org.apache.rocketmq.common.message.MessageConst;
-import org.apache.rocketmq.common.message.MessageDecoder;
-import org.apache.rocketmq.common.message.MessageExt;
-import org.apache.rocketmq.common.message.MessageId;
-import org.apache.rocketmq.common.message.MessageQueue;
+import org.apache.rocketmq.common.message.*;
 import org.apache.rocketmq.common.protocol.ResponseCode;
 import org.apache.rocketmq.common.protocol.header.QueryMessageRequestHeader;
 import org.apache.rocketmq.common.protocol.header.QueryMessageResponseHeader;
 import org.apache.rocketmq.common.protocol.route.BrokerData;
 import org.apache.rocketmq.common.protocol.route.TopicRouteData;
+import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.remoting.InvokeCallback;
 import org.apache.rocketmq.remoting.common.RemotingUtil;
 import org.apache.rocketmq.remoting.exception.RemotingCommandException;
 import org.apache.rocketmq.remoting.exception.RemotingException;
 import org.apache.rocketmq.remoting.netty.ResponseFuture;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+
+import java.nio.ByteBuffer;
+import java.util.Collections;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class MQAdminImpl {
 
@@ -76,8 +71,20 @@ public class MQAdminImpl {
         createTopic(key, newTopic, queueNum, 0);
     }
 
+    /**
+     * topic创建过程
+     * topic创建有两种方式：
+     *     1.broker支持在收发消息是自动创建，比如producer发出的消息带了一个不存在的topic，如果topic设置成可自动创建的话，会自动尝试创建topic
+     *     2.通过管理接口创建，这种方式生产环境使用较多，因为可以由管理员来统一管理topic
+     * @param key 系统已经存在的一个topic的名称，新建的topic会跟在它相同的broker上创建
+     * @param newTopic 新建的topic的唯一标识
+     * @param queueNum 指定topic中queue的数量
+     * @param topicSysFlag topic的标记位设置，没有特殊要求就填0,可选值在TopicSysFlag
+     * @throws MQClientException
+     */
     public void createTopic(String key, String newTopic, int queueNum, int topicSysFlag) throws MQClientException {
         try {
+            // 一般使用defaultTopic获取已经存在的broker data，所有的broker默认都支持defaultTopic。如果想在所有broker创建，一般使用DefaultTopic，因为这个topic是在所有broker上都存在的
             TopicRouteData topicRouteData = this.mQClientFactory.getMQClientAPIImpl().getTopicRouteInfoFromNameServer(key, timeoutMillis);
             List<BrokerData> brokerDataList = topicRouteData.getBrokerDatas();
             if (brokerDataList != null && !brokerDataList.isEmpty()) {
@@ -88,17 +95,22 @@ public class MQAdminImpl {
 
                 StringBuilder orderTopicString = new StringBuilder();
 
+                // 轮询所有broker，在master上创建topic，中间有一个topic失败，则终止创建。因为master和slave的配置数据会自动同步，所以只需要在master上创建
                 for (BrokerData brokerData : brokerDataList) {
                     String addr = brokerData.getBrokerAddrs().get(MixAll.MASTER_ID);
                     if (addr != null) {
                         TopicConfig topicConfig = new TopicConfig(newTopic);
+                        // 设置queue数量
                         topicConfig.setReadQueueNums(queueNum);
                         topicConfig.setWriteQueueNums(queueNum);
+                        // 设置topic属性，比如可读、可写
                         topicConfig.setTopicSysFlag(topicSysFlag);
 
                         boolean createOK = false;
+                        // 重试5次
                         for (int i = 0; i < 5; i++) {
                             try {
+                                //调用MQClientAPIImpl接口创建
                                 this.mQClientFactory.getMQClientAPIImpl().createTopic(addr, key, topicConfig, timeoutMillis);
                                 createOK = true;
                                 createOKAtLeastOnce = true;

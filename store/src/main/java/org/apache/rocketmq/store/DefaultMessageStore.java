@@ -352,6 +352,12 @@ public class DefaultMessageStore implements MessageStore {
         }
     }
 
+    /**
+     * broker接收到消息之后，调用该方法存储消息
+     * 首先判断broker是否是master，并且master当前是可写的。然后判断commitLog上次flush的时候是否超时，如果超时返回OS_PAGECACHE_BUSY的错误，最终调用commitlog.putMessage()方法保存消息。
+     * @param msg Message instance to store
+     * @return
+     */
     public PutMessageResult putMessage(MessageExtBrokerInner msg) {
         if (this.shutdown) {
             log.warn("message store has shutdown, so putMessage is forbidden");
@@ -393,15 +399,18 @@ public class DefaultMessageStore implements MessageStore {
         }
 
         long beginTime = this.getSystemClock().now();
+        // commitLog保存消息
         PutMessageResult result = this.commitLog.putMessage(msg);
 
         long eclipseTime = this.getSystemClock().now() - beginTime;
         if (eclipseTime > 500) {
             log.warn("putMessage not in lock eclipse time(ms)={}, bodyLength={}", eclipseTime, msg.getBody().length);
         }
+        // 收集消息store时间
         this.storeStatsService.setPutMessageEntireTimeMax(eclipseTime);
 
         if (null == result || !result.isOk()) {
+            // 记录失败次数
             this.storeStatsService.getPutMessageFailedTimes().incrementAndGet();
         }
 
@@ -867,6 +876,16 @@ public class DefaultMessageStore implements MessageStore {
         this.cleanCommitLogService.excuteDeleteFilesManualy();
     }
 
+    /**
+     * 根据messageKey查询消息
+     * 先从IndexService中读取offset，然后到CommitLog中读取消息详情
+     * @param topic topic of the message. 只能按照topic维度来查询消息，因为索引生成的时候key是用的topic + messageKey
+     * @param key message key. messageKey
+     * @param maxNum maximum number of the messages possible. 最多返回的消息数，因为可以是用户设置的，并不保证唯一，所以可能取到多个消息，同时index中只存储了hash，所以hash相同的消息也会拉取出来
+     * @param begin begin timestamp. 起始时间
+     * @param end end timestamp. 结束时间  只会查询指定时间段的消息
+     * @return
+     */
     @Override
     public QueryMessageResult queryMessage(String topic, String key, int maxNum, long begin, long end) {
         QueryMessageResult queryMessageResult = new QueryMessageResult();
@@ -874,6 +893,7 @@ public class DefaultMessageStore implements MessageStore {
         long lastQueryMsgTime = end;
 
         for (int i = 0; i < 3; i++) {
+            // 从indexService中查询所有offset
             QueryOffsetResult queryOffsetResult = this.indexService.queryOffset(topic, key, maxNum, begin, lastQueryMsgTime);
             if (queryOffsetResult.getPhyOffsets().isEmpty()) {
                 break;
@@ -906,6 +926,7 @@ public class DefaultMessageStore implements MessageStore {
 //                    }
 
                     if (match) {
+                        // 根据offset，到commitLog读取消息详情
                         SelectMappedBufferResult result = this.commitLog.getData(offset, false);
                         if (result != null) {
                             int size = result.getByteBuffer().getInt(0);
@@ -1423,6 +1444,7 @@ public class DefaultMessageStore implements MessageStore {
     }
 
     public void putMessagePositionInfo(DispatchRequest dispatchRequest) {
+        // 找到对应的ConsumeQueue文件。consumeQueue的数据存储结构，每个topicId + queueId对应一个ConsumeQueue，每个ConsumeQueue包含了一系列MappedFile。如果不存在ConsumeQueue就会新建一个
         ConsumeQueue cq = this.findConsumeQueue(dispatchRequest.getTopic(), dispatchRequest.getQueueId());
         cq.putMessagePositionInfoWrapper(dispatchRequest);
     }
@@ -1463,6 +1485,9 @@ public class DefaultMessageStore implements MessageStore {
         }, 6, TimeUnit.SECONDS);
     }
 
+    /**
+     * Dispatcher构建ConsumeQueue
+     */
     class CommitLogDispatcherBuildConsumeQueue implements CommitLogDispatcher {
 
         @Override
@@ -1483,6 +1508,10 @@ public class DefaultMessageStore implements MessageStore {
 
     class CommitLogDispatcherBuildIndex implements CommitLogDispatcher {
 
+        /**
+         * 调用indexService创建index
+         * @param request
+         */
         @Override
         public void dispatch(DispatchRequest request) {
             if (DefaultMessageStore.this.messageStoreConfig.isMessageIndexEnable()) {
@@ -1760,6 +1789,9 @@ public class DefaultMessageStore implements MessageStore {
         }
     }
 
+    /**
+     * 单线程任务
+     */
     class ReputMessageService extends ServiceThread {
 
         private volatile long reputFromOffset = 0;
@@ -1797,28 +1829,40 @@ public class DefaultMessageStore implements MessageStore {
             return this.reputFromOffset < DefaultMessageStore.this.commitLog.getMaxOffset();
         }
 
+        /**
+         * 单线程任务
+         */
         private void doReput() {
             for (boolean doNext = true; this.isCommitLogAvailable() && doNext; ) {
 
+                // 判断commitlog的maxOffset是否比上次读取的offset大。 每次处理完读取消息后，都将当前已经处理的最大的offset记录下来，下次处理这个从这个offset开始读取消息
                 if (DefaultMessageStore.this.getMessageStoreConfig().isDuplicationEnable()
                     && this.reputFromOffset >= DefaultMessageStore.this.getConfirmOffset()) {
                     break;
                 }
 
+                // 从上次的结束offset开始读取commitLog文件中的消息。
                 SelectMappedBufferResult result = DefaultMessageStore.this.commitLog.getData(reputFromOffset);
                 if (result != null) {
                     try {
                         this.reputFromOffset = result.getStartOffset();
 
                         for (int readSize = 0; readSize < result.getSize() && doNext; ) {
+                            // 检查message数据完整性并封装成DispatchRequest。
                             DispatchRequest dispatchRequest =
                                 DefaultMessageStore.this.commitLog.checkMessageAndReturnSize(result.getByteBuffer(), false, false);
                             int size = dispatchRequest.getMsgSize();
 
                             if (dispatchRequest.isSuccess()) {
                                 if (size > 0) {
+                                    /**
+                                     * 分发消息到commitLogDispatcher
+                                     *    1.构建索引
+                                     *    2.更新ConsumeQueue
+                                     */
                                     DefaultMessageStore.this.doDispatch(dispatchRequest);
 
+                                    // 分发消息到MessageArrivingListener，唤醒等待的PullRequest接收消息，OnlyMaster
                                     if (BrokerRole.SLAVE != DefaultMessageStore.this.getMessageStoreConfig().getBrokerRole()
                                         && DefaultMessageStore.this.brokerConfig.isLongPollingEnable()) {
                                         DefaultMessageStore.this.messageArrivingListener.arriving(dispatchRequest.getTopic(),
@@ -1827,6 +1871,7 @@ public class DefaultMessageStore implements MessageStore {
                                             dispatchRequest.getBitMap(), dispatchRequest.getPropertiesMap());
                                     }
 
+                                    // 更新offset
                                     this.reputFromOffset += size;
                                     readSize += size;
                                     if (DefaultMessageStore.this.getMessageStoreConfig().getBrokerRole() == BrokerRole.SLAVE) {
@@ -1837,11 +1882,13 @@ public class DefaultMessageStore implements MessageStore {
                                             .addAndGet(dispatchRequest.getMsgSize());
                                     }
                                 } else if (size == 0) {
+                                    // 如果读取到文件结尾，则切换到新文件
                                     this.reputFromOffset = DefaultMessageStore.this.commitLog.rollNextFile(this.reputFromOffset);
                                     readSize = result.getSize();
                                 }
                             } else if (!dispatchRequest.isSuccess()) {
 
+                                // 解析消息出错，跳过。commitLog文件中消息数据损坏的情况下才会执行到这里
                                 if (size > 0) {
                                     log.error("[BUG]read total count not equals msg total size. reputFromOffset={}", reputFromOffset);
                                     this.reputFromOffset += size;
@@ -1857,6 +1904,7 @@ public class DefaultMessageStore implements MessageStore {
                             }
                         }
                     } finally {
+                        // release对MappedFile的引用
                         result.release();
                     }
                 } else {

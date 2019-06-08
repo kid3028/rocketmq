@@ -84,6 +84,13 @@ public class PullMessageProcessor implements NettyRequestProcessor {
     }
 
     /**
+     * pull请求处理过程
+     *  首先会对一些参数进行检查，然后检查请求汇总带的过滤条件是否一致。
+     *  注意：对于同一个ConsumerGroup下多个consumer客户端，broker要求订阅参数必须是一致的，要不然会造成数据混乱。
+     *        比如ConsumerA和ConsumerB属于同一个ConsumerGroup，采用cluster模式消费，如果两个设置的消息过滤条件不一致，
+     *        那么broker就不知道以哪个为准。在实际项目中，属于同一个consumerGroup的消费者，代码必须是同一套
+     *
+     *
      * broker处理producer发送来的消息的时候，会有建议broker
      * broker会返回给consumer建议的brokerI的的情况：
      *    1.如果slave可读并且当前broker消费过慢的时候，如果没有配置org.apache.rocketmq.common.subscription.SubscriptionGroupConfig#whichBrokerWhenConsumeSlowly的时候，默认是返回brokerId为1的broker
@@ -115,12 +122,14 @@ public class PullMessageProcessor implements NettyRequestProcessor {
 
         log.debug("receive PullMessage request command, {}", request);
 
+        // 判断broker当前是否可读
         if (!PermName.isReadable(this.brokerController.getBrokerConfig().getBrokerPermission())) {
             response.setCode(ResponseCode.NO_PERMISSION);
             response.setRemark(String.format("the broker[%s] pulling message is forbidden", this.brokerController.getBrokerConfig().getBrokerIP1()));
             return response;
         }
 
+        // ConsumeGroup是否已经注册
         SubscriptionGroupConfig subscriptionGroupConfig =
             this.brokerController.getSubscriptionGroupManager().findSubscriptionGroupConfig(requestHeader.getConsumerGroup());
         if (null == subscriptionGroupConfig) {
@@ -129,6 +138,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
             return response;
         }
 
+        // consumeGroup的消费状态是否是Enable
         if (!subscriptionGroupConfig.isConsumeEnable()) {
             response.setCode(ResponseCode.NO_PERMISSION);
             response.setRemark("subscription group no permission, " + requestHeader.getConsumerGroup());
@@ -141,6 +151,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
 
         final long suspendTimeoutMillisLong = hasSuspendFlag ? requestHeader.getSuspendTimeoutMillis() : 0;
 
+        // 请求的topic是否存在，并且可选，请求的queueId是否合法
         TopicConfig topicConfig = this.brokerController.getTopicConfigManager().selectTopicConfig(requestHeader.getTopic());
         if (null == topicConfig) {
             log.error("the topic {} not exist, consumer: {}", requestHeader.getTopic(), RemotingHelper.parseChannelRemoteAddr(channel));
@@ -166,11 +177,13 @@ public class PullMessageProcessor implements NettyRequestProcessor {
 
         SubscriptionData subscriptionData = null;
         ConsumerFilterData consumerFilterData = null;
+        // 有设置subscribe flag，表示第一次pull或者需要更新filter
         if (hasSubscriptionFlag) {
             try {
                 subscriptionData = FilterAPI.build(
                     requestHeader.getTopic(), requestHeader.getSubscription(), requestHeader.getExpressionType()
                 );
+                // 是否使用了表达式过滤
                 if (!ExpressionType.isTagType(subscriptionData.getExpressionType())) {
                     consumerFilterData = ConsumerFilterManager.build(
                         requestHeader.getTopic(), requestHeader.getConsumerGroup(), requestHeader.getSubscription(),
@@ -186,6 +199,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                 return response;
             }
         } else {
+            // 没有设置subscribe flag，表示之前已经订阅过了，对比订阅条件是否一致
             ConsumerGroupInfo consumerGroupInfo =
                 this.brokerController.getConsumerManager().getConsumerGroupInfo(requestHeader.getConsumerGroup());
             if (null == consumerGroupInfo) {
@@ -195,6 +209,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                 return response;
             }
 
+            // 检查subscribe mode是否一致
             if (!subscriptionGroupConfig.isConsumeBroadcastEnable()
                 && consumerGroupInfo.getMessageModel() == MessageModel.BROADCASTING) {
                 response.setCode(ResponseCode.NO_PERMISSION);
@@ -202,6 +217,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                 return response;
             }
 
+            // 检查consumer未订阅消息
             subscriptionData = consumerGroupInfo.findSubscriptionData(requestHeader.getTopic());
             if (null == subscriptionData) {
                 log.warn("the consumer's subscription not exist, group: {}, topic:{}", requestHeader.getConsumerGroup(), requestHeader.getTopic());
@@ -210,6 +226,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                 return response;
             }
 
+            // pull request的version和subscribe时提供的version不匹配
             if (subscriptionData.getSubVersion() < requestHeader.getSubVersion()) {
                 log.warn("The broker's subscription is not latest, group: {} {}", requestHeader.getConsumerGroup(),
                     subscriptionData.getSubString());
@@ -217,6 +234,8 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                 response.setRemark("the consumer's subscription not latest");
                 return response;
             }
+
+            // 过滤条件的版本不一致
             if (!ExpressionType.isTagType(subscriptionData.getExpressionType())) {
                 consumerFilterData = this.brokerController.getConsumerFilterManager().get(requestHeader.getTopic(),
                     requestHeader.getConsumerGroup());
@@ -235,6 +254,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
             }
         }
 
+        // 判断是否支持SQL表达式过滤
         if (!ExpressionType.isTagType(subscriptionData.getExpressionType())
             && !this.brokerController.getBrokerConfig().isEnablePropertyFilter()) {
             response.setCode(ResponseCode.SYSTEM_ERROR);
@@ -251,15 +271,25 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                 this.brokerController.getConsumerFilterManager());
         }
 
+        /**
+         * 从messageStore读取消息
+         *     1.找到topic+queue对应的ConsumeQueue
+         *     2.根据PullRequest传入的offset找到MappedFile
+         *     3.从MappedFile中读取指定数量的CQUnit，根据tagCode做过滤，然后得到过滤后的commitLog的offset
+         *     4.根据offset从CommitLog中获取消息详情
+         *     5.根据消息详情再做一次过滤，然后返回结果
+         */
         final GetMessageResult getMessageResult =
             this.brokerController.getMessageStore().getMessage(requestHeader.getConsumerGroup(), requestHeader.getTopic(),
                 requestHeader.getQueueId(), requestHeader.getQueueOffset(), requestHeader.getMaxMsgNums(), messageFilter);
         if (getMessageResult != null) {
+            // 根据读取到的内容设合资response header
             response.setRemark(getMessageResult.getStatus().name());
             responseHeader.setNextBeginOffset(getMessageResult.getNextBeginOffset());
             responseHeader.setMinOffset(getMessageResult.getMinOffset());
             responseHeader.setMaxOffset(getMessageResult.getMaxOffset());
 
+            // master读取比较慢的话，默认设置推荐从salve读取
             if (getMessageResult.isSuggestPullingFromSlave()) {
                 responseHeader.setSuggestWhichBrokerId(subscriptionGroupConfig.getWhichBrokerWhenConsumeSlowly());
             } else {
@@ -270,6 +300,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                 case ASYNC_MASTER:
                 case SYNC_MASTER:
                     break;
+                // 如果当前broker是slave，并且不支持read，则提示客户端从master读
                 case SLAVE:
                     if (!this.brokerController.getBrokerConfig().isSlaveReadEnable()) {
                         response.setCode(ResponseCode.PULL_RETRY_IMMEDIATELY);
@@ -294,15 +325,19 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                 responseHeader.setSuggestWhichBrokerId(MixAll.MASTER_ID);
             }
 
+            // 将MessageStore的返回状态映射成response的状态
             switch (getMessageResult.getStatus()) {
+                // 成功
                 case FOUND:
                     response.setCode(ResponseCode.SUCCESS);
                     break;
+                // 消息正在被后台任务删除，建议客户端重新发送请求
                 case MESSAGE_WAS_REMOVING:
                     response.setCode(ResponseCode.PULL_RETRY_IMMEDIATELY);
                     break;
                 case NO_MATCHED_LOGIC_QUEUE:
                 case NO_MESSAGE_IN_QUEUE:
+                    // queue不存在或者offset不存在
                     if (0 != requestHeader.getQueueOffset()) {
                         response.setCode(ResponseCode.PULL_OFFSET_MOVED);
 
@@ -324,6 +359,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                 case OFFSET_FOUND_NULL:
                     response.setCode(ResponseCode.PULL_NOT_FOUND);
                     break;
+                // 要读取的offset太大
                 case OFFSET_OVERFLOW_BADLY:
                     response.setCode(ResponseCode.PULL_OFFSET_MOVED);
                     // XXX: warn and notify me
@@ -344,6 +380,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                     break;
             }
 
+            // 回调用户注册的consumeHook
             if (this.hasConsumeMessageHook()) {
                 ConsumeMessageContext context = new ConsumeMessageContext();
                 context.setConsumerGroup(requestHeader.getConsumerGroup());
@@ -386,15 +423,23 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                 this.executeConsumeMessageHookBefore(context);
             }
 
+            // 处理返回结果
             switch (response.getCode()) {
                 case ResponseCode.SUCCESS:
 
+                    // 成功后更新统计信息
                     this.brokerController.getBrokerStatsManager().incGroupGetNums(requestHeader.getConsumerGroup(), requestHeader.getTopic(),
                         getMessageResult.getMessageCount());
 
                     this.brokerController.getBrokerStatsManager().incGroupGetSize(requestHeader.getConsumerGroup(), requestHeader.getTopic(),
                         getMessageResult.getBufferTotalSize());
 
+                    /**
+                     * 从文件中读取消息set到response body返回
+                     * 如果消息读取成功，从MessageStore返回的消息仍然是只返回了指向内存文件的ByteBuffer，根据配置有两种返回数据的方式，
+                     *    1.从ByteBuffer中将数据读取到response中，然后返回，
+                     *    2.第二种是让netty直接读取ByteBuffer，将消息写给客户端，相对于前一种，不需要将ByteBuffer中数据copy到java heap，少了一次内存copy。但无法记录监控信息，比如consumer消费延时等指标
+                     */
                     this.brokerController.getBrokerStatsManager().incBrokerGetNums(getMessageResult.getMessageCount());
                     if (this.brokerController.getBrokerConfig().isTransferMsgByHeap()) {
                         final long beginTimeMills = this.brokerController.getMessageStore().now();
@@ -405,6 +450,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                         response.setBody(r);
                     } else {
                         try {
+                            // netty直接读取内存映射文件，少一次copy
                             FileRegion fileRegion =
                                 new ManyMessageTransfer(response.encodeHeader(getMessageResult.getBufferTotalSize()), getMessageResult);
                             channel.writeAndFlush(fileRegion).addListener(new ChannelFutureListener() {
@@ -425,7 +471,13 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                     }
                     break;
                 case ResponseCode.PULL_NOT_FOUND:
-
+                    /**
+                     * 没有读取到消息，则hold住请求，有新消息时唤醒，等待超时后还是没有读到brokerAllowSuspend=false
+                     * 如果没有读取到消息，会判断是否是PushConsumer(根据参数hasSuspendFlag)，如果是的话，则将请求挂起，方式就是封装成PullRequest提交给PullRequestHoldService。
+                     * 另一个参数brokerAllowSuspend，这个参数是false的话不会挂起请求。
+                     * PullRequest被hold住不会无限期等待，这里有一个超时时间，如果等待超时后，就会重新提交到这个processor，这个是够brokerAllowSuspend参数会设置为false，
+                     * 所以这次无论是否有消息读取到，都不会hold住了
+                     */
                     if (brokerAllowSuspend && hasSuspendFlag) {
                         long pollingTimeMills = suspendTimeoutMillisLong;
                         if (!this.brokerController.getBrokerConfig().isLongPollingEnable()) {
@@ -445,7 +497,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                 case ResponseCode.PULL_RETRY_IMMEDIATELY:
                     break;
                 case ResponseCode.PULL_OFFSET_MOVED:
-                    // 如果当前broker是slave并且消费消息的offset在broker中没有找到的时候，建议consumer再次向这个broker发送请求重试
+                    // 如果当前broker不是slave并且消费消息的offset在broker中没有找到的时候，建议consumer再次向这个broker发送请求重试
                     if (this.brokerController.getMessageStoreConfig().getBrokerRole() != BrokerRole.SLAVE
                         || this.brokerController.getMessageStoreConfig().isOffsetCheckInSlave()) {
                         MessageQueue mq = new MessageQueue();
@@ -484,6 +536,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
         storeOffsetEnable = storeOffsetEnable && hasCommitOffsetFlag;
         storeOffsetEnable = storeOffsetEnable
             && this.brokerController.getMessageStoreConfig().getBrokerRole() != BrokerRole.SLAVE;
+        // 记录consumer当前消费的offset，便于consumer故障恢复
         if (storeOffsetEnable) {
             this.brokerController.getConsumerOffsetManager().commitOffset(RemotingHelper.parseChannelRemoteAddr(channel),
                 requestHeader.getConsumerGroup(), requestHeader.getTopic(), requestHeader.getQueueId(), requestHeader.getCommitOffset());

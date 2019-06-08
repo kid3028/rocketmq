@@ -60,6 +60,13 @@ public class EndTransactionProcessor implements NettyRequestProcessor {
         this.brokerController = brokerController;
     }
 
+    /**
+     * broker专门处理commit、rollback消息
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     @Override
     public RemotingCommand processRequest(ChannelHandlerContext ctx, RemotingCommand request) throws
         RemotingCommandException {
@@ -73,6 +80,7 @@ public class EndTransactionProcessor implements NettyRequestProcessor {
             return response;
         }
 
+        // 判断是来源于producer主动发送的消息还是broker主动检查返回的消息，这里只是用来记录日志
         if (requestHeader.getFromTransactionCheck()) {
             switch (requestHeader.getCommitOrRollback()) {
                 case MessageSysFlag.TRANSACTION_NOT_TYPE: {
@@ -133,18 +141,34 @@ public class EndTransactionProcessor implements NettyRequestProcessor {
             }
         }
         OperationResult result = new OperationResult();
+        // 如果收到的是提交事务消息
         if (MessageSysFlag.TRANSACTION_COMMIT_TYPE == requestHeader.getCommitOrRollback()) {
+            // 从commitLog中查出原始的prepared消息
             result = this.brokerController.getTransactionalMessageService().commitMessage(requestHeader);
             if (result.getResponseCode() == ResponseCode.SUCCESS) {
+                // 检查获取到的消息是否和当前消息匹配(包括producerGroup、queueOffset、commitLogOffset)
                 RemotingCommand res = checkPrepareMessage(result.getPrepareMessage(), requestHeader);
                 if (res.getCode() == ResponseCode.SUCCESS) {
+                    /**
+                     * 使用原始的prepare消息属性，构建最终发给consumer的消息
+                     * 当收到commit消息时，broker会根据消息中携带的offset信息去commitLog中查出原来的Prepare消息。
+                     * 这也是为什么producer在发送最终的commit消息的时候一定要指定是同一个broker。
+                     * 消息查到之后按照原来的topic和queueId，生成一条新的消息重新存到MessageStore，这样这条消息就跟普通消息一样，被consumer收到了
+                     */
                     MessageExtBrokerInner msgInner = endMessageTransaction(result.getPrepareMessage());
                     msgInner.setSysFlag(MessageSysFlag.resetTransactionValue(msgInner.getSysFlag(), requestHeader.getCommitOrRollback()));
                     msgInner.setQueueOffset(requestHeader.getTranStateTableOffset());
                     msgInner.setPreparedTransactionOffset(requestHeader.getCommitLogOffset());
                     msgInner.setStoreTimestamp(result.getPrepareMessage().getStoreTimestamp());
+                    // 调用messageStore的消息存储接口提交消息，使用真正的topic和queueId
                     RemotingCommand sendResult = sendFinalMessage(msgInner);
                     if (sendResult.getCode() == ResponseCode.SUCCESS) {
+                        /**
+                         * 设置prepare消息的标记位delete
+                         * 消息commit之后，理论上需要将原来的Prepare消息删除，这样broker就能知道哪些消息是一直没有收到commit、rollback，
+                         * 需要去producer回查状态，但是如果直接修改commitLog文件，这个代价是很大的，所以RocketMQ是通过生成一个新的delete消息
+                         * 来标记的，这样在检查的时候只需要看下Prepare消息有没有对应的delete消息就可以
+                         */
                         this.brokerController.getTransactionalMessageService().deletePrepareMessage(result.getPrepareMessage());
                     }
                     return sendResult;
@@ -152,6 +176,7 @@ public class EndTransactionProcessor implements NettyRequestProcessor {
                 return res;
             }
         } else if (MessageSysFlag.TRANSACTION_ROLLBACK_TYPE == requestHeader.getCommitOrRollback()) {
+            // 收到回滚事务消息，则不需要重新生成新消息发送，只需要将原来消息的标记位改为delete即可
             result = this.brokerController.getTransactionalMessageService().rollbackMessage(requestHeader);
             if (result.getResponseCode() == ResponseCode.SUCCESS) {
                 RemotingCommand res = checkPrepareMessage(result.getPrepareMessage(), requestHeader);
@@ -201,6 +226,13 @@ public class EndTransactionProcessor implements NettyRequestProcessor {
         return response;
     }
 
+    /**
+     * 当收到commit消息时，broker会根据消息中携带的offset信息去commitLog中查出原来的Prepare消息。
+     * 这也是为什么producer在发送最终的commit消息的时候一定要指定是同一个broker。
+     * 消息查到之后按照原来的topic和queueId，生成一条新的消息重新存到MessageStore，这样这条消息就跟普通消息一样，被consumer收到了
+     * @param msgExt
+     * @return
+     */
     private MessageExtBrokerInner endMessageTransaction(MessageExt msgExt) {
         MessageExtBrokerInner msgInner = new MessageExtBrokerInner();
         msgInner.setTopic(msgExt.getUserProperty(MessageConst.PROPERTY_REAL_TOPIC));

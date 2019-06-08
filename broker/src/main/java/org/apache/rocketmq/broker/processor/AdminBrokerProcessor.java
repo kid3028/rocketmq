@@ -19,17 +19,6 @@ package org.apache.rocketmq.broker.processor;
 import com.alibaba.fastjson.JSON;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
-import java.io.UnsupportedEncodingException;
-import java.net.UnknownHostException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
-import java.util.Set;
-import java.util.concurrent.ConcurrentMap;
 import org.apache.rocketmq.broker.BrokerController;
 import org.apache.rocketmq.broker.client.ClientChannelInfo;
 import org.apache.rocketmq.broker.client.ConsumerGroupInfo;
@@ -44,58 +33,13 @@ import org.apache.rocketmq.common.admin.OffsetWrapper;
 import org.apache.rocketmq.common.admin.TopicOffset;
 import org.apache.rocketmq.common.admin.TopicStatsTable;
 import org.apache.rocketmq.common.constant.LoggerName;
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.common.message.MessageDecoder;
 import org.apache.rocketmq.common.message.MessageId;
 import org.apache.rocketmq.common.message.MessageQueue;
 import org.apache.rocketmq.common.protocol.RequestCode;
 import org.apache.rocketmq.common.protocol.ResponseCode;
-import org.apache.rocketmq.common.protocol.body.BrokerStatsData;
-import org.apache.rocketmq.common.protocol.body.BrokerStatsItem;
-import org.apache.rocketmq.common.protocol.body.Connection;
-import org.apache.rocketmq.common.protocol.body.ConsumeQueueData;
-import org.apache.rocketmq.common.protocol.body.ConsumeStatsList;
-import org.apache.rocketmq.common.protocol.body.ConsumerConnection;
-import org.apache.rocketmq.common.protocol.body.GroupList;
-import org.apache.rocketmq.common.protocol.body.KVTable;
-import org.apache.rocketmq.common.protocol.body.LockBatchRequestBody;
-import org.apache.rocketmq.common.protocol.body.LockBatchResponseBody;
-import org.apache.rocketmq.common.protocol.body.ProducerConnection;
-import org.apache.rocketmq.common.protocol.body.QueryConsumeQueueResponseBody;
-import org.apache.rocketmq.common.protocol.body.QueryConsumeTimeSpanBody;
-import org.apache.rocketmq.common.protocol.body.QueryCorrectionOffsetBody;
-import org.apache.rocketmq.common.protocol.body.QueueTimeSpan;
-import org.apache.rocketmq.common.protocol.body.TopicList;
-import org.apache.rocketmq.common.protocol.body.UnlockBatchRequestBody;
-import org.apache.rocketmq.common.protocol.header.CloneGroupOffsetRequestHeader;
-import org.apache.rocketmq.common.protocol.header.ConsumeMessageDirectlyResultRequestHeader;
-import org.apache.rocketmq.common.protocol.header.CreateTopicRequestHeader;
-import org.apache.rocketmq.common.protocol.header.DeleteSubscriptionGroupRequestHeader;
-import org.apache.rocketmq.common.protocol.header.DeleteTopicRequestHeader;
-import org.apache.rocketmq.common.protocol.header.GetAllTopicConfigResponseHeader;
-import org.apache.rocketmq.common.protocol.header.GetBrokerConfigResponseHeader;
-import org.apache.rocketmq.common.protocol.header.GetConsumeStatsInBrokerHeader;
-import org.apache.rocketmq.common.protocol.header.GetConsumeStatsRequestHeader;
-import org.apache.rocketmq.common.protocol.header.GetConsumerConnectionListRequestHeader;
-import org.apache.rocketmq.common.protocol.header.GetConsumerRunningInfoRequestHeader;
-import org.apache.rocketmq.common.protocol.header.GetConsumerStatusRequestHeader;
-import org.apache.rocketmq.common.protocol.header.GetEarliestMsgStoretimeRequestHeader;
-import org.apache.rocketmq.common.protocol.header.GetEarliestMsgStoretimeResponseHeader;
-import org.apache.rocketmq.common.protocol.header.GetMaxOffsetRequestHeader;
-import org.apache.rocketmq.common.protocol.header.GetMaxOffsetResponseHeader;
-import org.apache.rocketmq.common.protocol.header.GetMinOffsetRequestHeader;
-import org.apache.rocketmq.common.protocol.header.GetMinOffsetResponseHeader;
-import org.apache.rocketmq.common.protocol.header.GetProducerConnectionListRequestHeader;
-import org.apache.rocketmq.common.protocol.header.GetTopicStatsInfoRequestHeader;
-import org.apache.rocketmq.common.protocol.header.QueryConsumeQueueRequestHeader;
-import org.apache.rocketmq.common.protocol.header.QueryConsumeTimeSpanRequestHeader;
-import org.apache.rocketmq.common.protocol.header.QueryCorrectionOffsetHeader;
-import org.apache.rocketmq.common.protocol.header.QueryTopicConsumeByWhoRequestHeader;
-import org.apache.rocketmq.common.protocol.header.ResetOffsetRequestHeader;
-import org.apache.rocketmq.common.protocol.header.SearchOffsetRequestHeader;
-import org.apache.rocketmq.common.protocol.header.SearchOffsetResponseHeader;
-import org.apache.rocketmq.common.protocol.header.ViewBrokerStatsDataRequestHeader;
+import org.apache.rocketmq.common.protocol.body.*;
+import org.apache.rocketmq.common.protocol.header.*;
 import org.apache.rocketmq.common.protocol.header.filtersrv.RegisterFilterServerRequestHeader;
 import org.apache.rocketmq.common.protocol.header.filtersrv.RegisterFilterServerResponseHeader;
 import org.apache.rocketmq.common.protocol.heartbeat.SubscriptionData;
@@ -103,6 +47,8 @@ import org.apache.rocketmq.common.stats.StatsItem;
 import org.apache.rocketmq.common.stats.StatsSnapshot;
 import org.apache.rocketmq.common.subscription.SubscriptionGroupConfig;
 import org.apache.rocketmq.filter.util.BitsArray;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.remoting.common.RemotingHelper;
 import org.apache.rocketmq.remoting.exception.RemotingCommandException;
 import org.apache.rocketmq.remoting.exception.RemotingTimeoutException;
@@ -110,11 +56,12 @@ import org.apache.rocketmq.remoting.netty.NettyRequestProcessor;
 import org.apache.rocketmq.remoting.protocol.LanguageCode;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
 import org.apache.rocketmq.remoting.protocol.RemotingSerializable;
-import org.apache.rocketmq.store.ConsumeQueue;
-import org.apache.rocketmq.store.ConsumeQueueExt;
-import org.apache.rocketmq.store.DefaultMessageStore;
-import org.apache.rocketmq.store.MessageFilter;
-import org.apache.rocketmq.store.SelectMappedBufferResult;
+import org.apache.rocketmq.store.*;
+
+import java.io.UnsupportedEncodingException;
+import java.net.UnknownHostException;
+import java.util.*;
+import java.util.concurrent.ConcurrentMap;
 
 public class AdminBrokerProcessor implements NettyRequestProcessor {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
@@ -212,6 +159,15 @@ public class AdminBrokerProcessor implements NettyRequestProcessor {
         return false;
     }
 
+    /**
+     * broker创建topic
+     *   broker的topic创建是通过client调用管理接口实现的，NameServer的topic配置是通过broker上报的，是单向同步的。
+     *   所以在broker宕机期间topic如果发生了变化，只能通过client重新更新才能将变化同步给broker
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     private synchronized RemotingCommand updateAndCreateTopic(ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
         final RemotingCommand response = RemotingCommand.createResponseCommand(null);
@@ -219,6 +175,7 @@ public class AdminBrokerProcessor implements NettyRequestProcessor {
             (CreateTopicRequestHeader) request.decodeCommandCustomHeader(CreateTopicRequestHeader.class);
         log.info("updateAndCreateTopic called by {}", RemotingHelper.parseChannelRemoteAddr(ctx.channel()));
 
+        // 判断topicName的合法性，不能和clusterName同名
         if (requestHeader.getTopic().equals(this.brokerController.getBrokerConfig().getBrokerClusterName())) {
             String errorMsg = "the topic[" + requestHeader.getTopic() + "] is conflict with system reserved words.";
             log.warn(errorMsg);
@@ -228,6 +185,7 @@ public class AdminBrokerProcessor implements NettyRequestProcessor {
         }
 
         try {
+            // 先回复客户端创建成功，后更新broker缓存
             response.setCode(ResponseCode.SUCCESS);
             response.setOpaque(request.getOpaque());
             response.markResponseType();
@@ -244,8 +202,10 @@ public class AdminBrokerProcessor implements NettyRequestProcessor {
         topicConfig.setPerm(requestHeader.getPerm());
         topicConfig.setTopicSysFlag(requestHeader.getTopicSysFlag() == null ? 0 : requestHeader.getTopicSysFlag());
 
+        // 更新TopicConfigManager中topic配置信息，不存在则创建，存在则更新，并且持久化到文件中
         this.brokerController.getTopicConfigManager().updateTopicConfig(topicConfig);
 
+        // broker将topic信息同步到nameserver
         this.brokerController.registerIncrementBrokerData(topicConfig,this.brokerController.getTopicConfigManager().getDataVersion());
 
         return null;
