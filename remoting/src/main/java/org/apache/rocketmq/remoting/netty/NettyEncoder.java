@@ -19,13 +19,22 @@ package org.apache.rocketmq.remoting.netty;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.MessageToByteEncoder;
-import java.nio.ByteBuffer;
-import org.apache.rocketmq.remoting.common.RemotingHelper;
-import org.apache.rocketmq.remoting.common.RemotingUtil;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.remoting.common.RemotingHelper;
+import org.apache.rocketmq.remoting.common.RemotingUtil;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
 
+import java.nio.ByteBuffer;
+
+/**
+ * 协议
+ * 总长度 4+4+消息头长度+消息体长度
+ * +---------------------+----------------------------+--------------------------------+------------------------------------------+
+ * |  消息长度           | 序列化类型&头部长度        |  消息头数据                     |  消息主体数据
+ * |  4个字节           | 4字节(2,3,4个字节表示消息头长度)| 头部长度中描述的长度            |  消息长度 - 消息头长度
+ * +--------------------+----------------------------+---------------------------------+
+ */
 public class NettyEncoder extends MessageToByteEncoder<RemotingCommand> {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(RemotingHelper.ROCKETMQ_REMOTING);
 

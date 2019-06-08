@@ -18,9 +18,19 @@
 package org.apache.rocketmq.remoting;
 
 public interface RemotingService {
+    /**
+     * 开启服务
+     */
     void start();
 
+    /**
+     * 关闭服务
+     */
     void shutdown();
 
+    /**
+     * 注册 hook(可以在调用之前和调用之后做一些扩展处理，类似前置处理器和后置处理器)
+     * @param rpcHook
+     */
     void registerRPCHook(RPCHook rpcHook);
 }

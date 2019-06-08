@@ -359,6 +359,7 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
         final Channel channel = this.getAndCreateChannel(addr);
         if (channel != null && channel.isActive()) {
             try {
+                // 调用之前执行的操作
                 if (this.rpcHook != null) {
                     this.rpcHook.doBeforeRequest(addr, request);
                 }
@@ -366,7 +367,9 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
                 if (timeoutMillis < costTime) {
                     throw new RemotingTimeoutException("invokeSync call timeout");
                 }
+                // 真正的发起调用
                 RemotingCommand response = this.invokeSyncImpl(channel, request, timeoutMillis - costTime);
+                // 结果返回后，如果有相关操作，则执行
                 if (this.rpcHook != null) {
                     this.rpcHook.doAfterResponse(RemotingHelper.parseChannelRemoteAddr(channel), request, response);
                 }

@@ -17,12 +17,13 @@
 package org.apache.rocketmq.remoting.netty;
 
 import io.netty.channel.Channel;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.rocketmq.remoting.InvokeCallback;
 import org.apache.rocketmq.remoting.common.SemaphoreReleaseOnlyOnce;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ResponseFuture {
     private final int opaque;
@@ -67,11 +68,21 @@ public class ResponseFuture {
         return diff > this.timeoutMillis;
     }
 
+    /**
+     * 发送请求后调用
+     * @param timeoutMillis
+     * @return
+     * @throws InterruptedException
+     */
     public RemotingCommand waitResponse(final long timeoutMillis) throws InterruptedException {
         this.countDownLatch.await(timeoutMillis, TimeUnit.MILLISECONDS);
         return this.responseCommand;
     }
 
+    /**
+     * 请求处理成功或者失败后调用，设置处理结果并打开CountDownLatch，从而实现同步
+     * @param responseCommand
+     */
     public void putResponse(final RemotingCommand responseCommand) {
         this.responseCommand = responseCommand;
         this.countDownLatch.countDown();

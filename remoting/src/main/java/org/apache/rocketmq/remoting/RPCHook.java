@@ -19,6 +19,10 @@ package org.apache.rocketmq.remoting;
 
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
 
+/**
+ * 在启动服务之前，可以把自己实现的RPCHook注册到服务中，执行远程调用的时候处理一些业务逻辑，
+ * 比如打印请求和响应的日志信息
+ */
 public interface RPCHook {
     void doBeforeRequest(final String remoteAddr, final RemotingCommand request);
 

@@ -19,13 +19,17 @@ package org.apache.rocketmq.remoting.netty;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
-import java.nio.ByteBuffer;
-import org.apache.rocketmq.remoting.common.RemotingHelper;
-import org.apache.rocketmq.remoting.common.RemotingUtil;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.remoting.common.RemotingHelper;
+import org.apache.rocketmq.remoting.common.RemotingUtil;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
 
+import java.nio.ByteBuffer;
+
+/**
+ * 因为RocketMQ的协议的头部是定长的，所以记录LengthFieldBasedFrameDecoder
+ */
 public class NettyDecoder extends LengthFieldBasedFrameDecoder {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(RemotingHelper.ROCKETMQ_REMOTING);
 

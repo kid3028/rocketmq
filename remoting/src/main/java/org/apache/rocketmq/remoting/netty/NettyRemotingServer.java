@@ -63,8 +63,8 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
     private final EventLoopGroup eventLoopGroupBoss; // 主线程组
     private final NettyServerConfig nettyServerConfig; // NettyServer配置
 
-    private final ExecutorService publicExecutor;
-    private final ChannelEventListener channelEventListener;
+    private final ExecutorService publicExecutor; // 处理接收消息的线程池
+    private final ChannelEventListener channelEventListener; // 监听channel，用于监听client和broker心跳
 
     private final Timer timer = new Timer("ServerHouseKeepingService", true);
     private DefaultEventExecutorGroup defaultEventExecutorGroup;
@@ -190,10 +190,39 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
         ServerBootstrap childHandler =
             this.serverBootstrap.group(this.eventLoopGroupBoss, this.eventLoopGroupSelector)
                 .channel(useEpoll() ? EpollServerSocketChannel.class : NioServerSocketChannel.class)
+                /**
+                 * tcp/ip协议listen函数中的backlog参数
+                 * 服务端处理客户端连接请求是顺序处理的，所以同一时间只能处理一个客户端连接，
+                 * 多个客户端来的时候，服务端将不能处理的客户端连接请求放在队列中等待处理，
+                 * backlog参数指定了队列的大小
+                 */
                 .option(ChannelOption.SO_BACKLOG, 1024)
+                /**
+                 * 对应于套接字选项中的SO_REUSERADDR，
+                 * 这个参数表示允许重复使用本地地址和端口，某个进程非正常退出，该程序占用的端口可能还被占用
+                 * 一段时间才能允许其他进程使用，而且程序死掉以后，内核需要一定时间才能释放此端口
+                 */
                 .option(ChannelOption.SO_REUSEADDR, true)
+                /**
+                 * 对应于套接字选项中的SO_KEEPALIVE，
+                 * 该参数用于设置TCP连接，当设置该选项以后，连接会测试链接的状态，这个选项用于可能长时间没有
+                 * 数据交流的连接，当设置该选项以后，如果在两小时内没有数据的通信时，TCP会自动发送一个活动探测数据报文
+                 */
                 .option(ChannelOption.SO_KEEPALIVE, false)
+                /**
+                 * 对应于套接字选项中的TCP_NODELAY
+                 * 该参数的使用与Nagle算法有关，Nagle算法将小的数据包组装为更大的帧，然后进行发送，
+                 * 而不是输入一次发送一次，因此在数据包不足的时候会等待其他数据的到达。
+                 * 组成成大的数据包进行发送，虽然该方式有效提高了网络的有效负载，但是却造成了延时，
+                 * 而该参数的作用就是禁止使用Nagle算法，使用小数据即时传输，与TCP_NODELAY相对的是TCP_CORK，
+                 * 该选项是需要等到发送的数据量最大的时候，一次发送，适用于文件传输
+                 */
                 .childOption(ChannelOption.TCP_NODELAY, true)
+                /**
+                 * 这两个参数用于操作接收缓冲区和发送缓冲区的大小。
+                 * 接收缓冲区用于保存网络协议站内收到的数据，直到应用程序读取成功
+                 * 发送缓冲区用于保存发送数据，直到发送成功
+                 */
                 .childOption(ChannelOption.SO_SNDBUF, nettyServerConfig.getServerSocketSndBufSize())
                 .childOption(ChannelOption.SO_RCVBUF, nettyServerConfig.getServerSocketRcvBufSize())
                 .localAddress(new InetSocketAddress(this.nettyServerConfig.getListenPort()))
@@ -213,12 +242,19 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
                                 new IdleStateHandler(0, 0, nettyServerConfig.getServerChannelMaxIdleTimeSeconds()),
                                 // 连接管理
                                 new NettyConnectManageHandler(),
-                                // 请求和响应处理器
+                              /**
+                             * 请求和响应处理器
+                             * 请求可以分为两类，
+                             *    一类是处理别的服务发来的请求，
+                             *    二类是处理自己发给别的服务的请求的处理结果。
+                             * 所有请求都是一部的，只是将请求相关的ResponseFuture记在一个ConcurrentHashMap中，map的key为与请求相关的一个整个
+                             */
                                 new NettyServerHandler()
                             );
                     }
                 });
 
+         // 使用对象池，重用缓冲区
         if (nettyServerConfig.isServerPooledByteBufAllocatorEnable()) {
             childHandler.childOption(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
         }

@@ -29,13 +29,13 @@ import java.util.concurrent.ExecutorService;
 public interface RemotingClient extends RemotingService {
 
     /**
-     * 更新协调服务列表
+     * 更新协调服务列表(NameServer地址)
      * @param addrs NameServer地址列表
      */
     void updateNameServerAddressList(final List<String> addrs);
 
     /**
-     * 获取协调服务列表
+     * 获取协调服务列表(NameServer地址)
      * @return
      */
     List<String> getNameServerAddressList();
@@ -72,7 +72,7 @@ public interface RemotingClient extends RemotingService {
         RemotingTooMuchRequestException, RemotingTimeoutException, RemotingSendRequestException;
 
     /**
-     * oneWay单向发送
+     * oneWay单向发送，只发送消息，不用处理发送的结果
      * @param addr
      * @param request
      * @param timeoutMillis
@@ -87,7 +87,7 @@ public interface RemotingClient extends RemotingService {
         RemotingTimeoutException, RemotingSendRequestException;
 
     /**
-     * 用于注册一些底层的通信服务：比如进行元数据信息的同步工作，commitlog的同步等
+     * 注册一个处理请求的处理器，根据requestCode，获取处理器，处理请求
      * @param requestCode 底层业务通信规则码
      * @param processor 注册器(单线程)
      * @param executor 线程池，用于执行注册器的业务逻辑
@@ -96,14 +96,14 @@ public interface RemotingClient extends RemotingService {
         final ExecutorService executor);
 
     /**
-     * 回调函数执行线程设置，用于生产者发送消息后的回调线程池
+     * 回调函数执行线程设置，用于生产者发送消息后的回调线程池，如果不设置，则使用默认的
      * 比如DefaultMQProducerImpl类里面异步发送消息后回调
      * @param callbackExecutor
      */
     void setCallbackExecutor(final ExecutorService callbackExecutor);
 
     /**
-     * 获取回调地池：NameServer地址
+     * 获取线程池
      * @return
      */
     ExecutorService getCallbackExecutor();
