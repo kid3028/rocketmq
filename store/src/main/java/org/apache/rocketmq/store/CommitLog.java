@@ -147,6 +147,12 @@ public class CommitLog {
         return this.getData(offset, offset == 0);
     }
 
+    /**
+     * 根据计算物理文件的大小与准备发送数据的偏移量得到具体要传送消息的位置
+     * @param offset
+     * @param returnFirstOnNotFound
+     * @return
+     */
     public SelectMappedBufferResult getData(final long offset, final boolean returnFirstOnNotFound) {
         int mappedFileSize = this.defaultMessageStore.getMessageStoreConfig().getMapedFileSizeCommitLog();
         MappedFile mappedFile = this.mappedFileQueue.findMappedFileByOffset(offset, returnFirstOnNotFound);
@@ -684,10 +690,20 @@ public class CommitLog {
         return putMessageResult;
     }
 
+    /**
+     * 刷盘
+     * @param result
+     * @param putMessageResult
+     * @param messageExt
+     */
     public void handleDiskFlush(AppendMessageResult result, PutMessageResult putMessageResult, MessageExt messageExt) {
         // Synchronization flush
         if (FlushDiskType.SYNC_FLUSH == this.defaultMessageStore.getMessageStoreConfig().getFlushDiskType()) {
             final GroupCommitService service = (GroupCommitService) this.flushCommitLogService;
+            /**
+             * 如果消息属性WAIT为ture
+             * 是否等待服务器将消息存储完毕再返回(等待刷盘完成)
+             */
             if (messageExt.isWaitStoreMsgOK()) {
                 GroupCommitRequest request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes());
                 service.putRequest(request);
@@ -727,16 +743,28 @@ public class CommitLog {
      * @param messageExt
      */
     public void handleHA(AppendMessageResult result, PutMessageResult putMessageResult, MessageExt messageExt) {
-        // 如果是SYNC_MASTER才会同步等待
+        // 如果是SYNC_MASTER，马上将信息同步到slave
         if (BrokerRole.SYNC_MASTER == this.defaultMessageStore.getMessageStoreConfig().getBrokerRole()) {
             HAService service = this.defaultMessageStore.getHaService();
+            /**
+             * 如果消息属性WAIT为true
+             * 是否等待服务器将消息存储完毕再返回(可能是等待刷盘完成或者等待同步复制到其他服务器完成)
+             */
             if (messageExt.isWaitStoreMsgOK()) {
                 // Determine whether to wait
-                // 存在slave并且slave不能落后master太多
+                /**
+                 * 存在slave并且slave不能落后master太多
+                 * isSlaveOK满足如下两个条件
+                 *     1.slave和master的进度相差小于256M，则认为正常
+                 *     2.slave连接数大于0，则认为正常
+                 *     getWroteOffset() 从什么位置开始写   getWroteBytes() 写多少字节
+                 */
                 if (service.isSlaveOK(result.getWroteOffset() + result.getWroteBytes())) {
+                    // groupCommitRequest中的offset代表了当时写commitLog之后commitLog offset的位置
                     GroupCommitRequest request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes());
+                    // 最终将会调用GroupTransferService的putMessage方法，即doWaitTransfer方法的那个集合
                     service.putRequest(request);
-                    // 唤醒可能等待新的消息数据到的传输数据线程
+                    // 唤醒可能等待新的消息数据到的传输数据线程  唤醒WriteSocketService
                     service.getWaitNotifyObject().wakeupAll();
                     // 等待当前的消息被传输到slave，等待slave收到该消息的确认后则flushOK=true
                     boolean flushOK =
@@ -750,6 +778,10 @@ public class CommitLog {
                 // Slave problem
                 else {
                     // Tell the producer, slave not available
+                    /**
+                     * 如果没有Slave的情况下，还配置了SYNC_MASTERd的模式
+                     * 那么isSlaveOK中的第二个条件失败，producer发送消息就会一直报这个错
+                     */
                     putMessageResult.setPutMessageStatus(PutMessageStatus.SLAVE_NOT_AVAILABLE);
                 }
             }
@@ -912,9 +944,16 @@ public class CommitLog {
         this.mappedFileQueue.destroy();
     }
 
+    /**
+     * 将具体的消息写入commitLog
+     * @param startOffset
+     * @param data
+     * @return
+     */
     public boolean appendData(long startOffset, byte[] data) {
         putMessageLock.lock();
         try {
+            // 根据startOffset得到具体的mappedFile，再向其中写数据。
             MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile(startOffset);
             if (null == mappedFile) {
                 log.error("appendData getLastMappedFile error  " + startOffset);
@@ -1109,11 +1148,22 @@ public class CommitLog {
             return nextOffset;
         }
 
+        /**
+         * 同步完成，唤醒等待的线程
+         * @param flushOK
+         */
         public void wakeupCustomer(final boolean flushOK) {
             this.flushOK = flushOK;
             this.countDownLatch.countDown();
         }
 
+        /**
+         * 等待主从同步完成
+         * 在 org.apache.rocketmq.store.ha.HAService.GroupTransferService#doWaitTransfer() 调用
+         * org.apache.rocketmq.store.CommitLog.GroupCommitRequest#wakeupCustomer(boolean) 被唤醒
+         * @param timeout
+         * @return
+         */
         public boolean waitForFlush(long timeout) {
             try {
                 this.countDownLatch.await(timeout, TimeUnit.MILLISECONDS);

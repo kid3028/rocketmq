@@ -30,6 +30,10 @@ public class WaitNotifyObject {
 
     protected volatile boolean hasNotified = false;
 
+    /**
+     * 只是设置了一个表示，然后调用notify方法，与RocketMQ刷盘策略类似，这里的操作和异步刷盘的时候的处理是一样。
+     * 只是设置了一个标识，然后唤醒。notifyTransferObject使用了wakeup，那么就有等待的地方，在doWaitTransfer方法
+     */
     public void wakeup() {
         synchronized (this) {
             if (!this.hasNotified) {

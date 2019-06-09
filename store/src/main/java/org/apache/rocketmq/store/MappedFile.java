@@ -247,11 +247,18 @@ public class MappedFile extends ReferenceResource {
         return this.fileFromOffset;
     }
 
+    /**
+     * 写入commitLog数据
+     * @param data
+     * @return
+     */
     public boolean appendMessage(final byte[] data) {
         int currentPos = this.wrotePosition.get();
 
+        // 空间足够
         if ((currentPos + data.length) <= this.fileSize) {
             try {
+                // 将data写入具体的物理文件内，更新新的文件写入位置，以便之后计算下一次更新偏移量大小
                 this.fileChannel.position(currentPos);
                 this.fileChannel.write(ByteBuffer.wrap(data));
             } catch (Throwable e) {

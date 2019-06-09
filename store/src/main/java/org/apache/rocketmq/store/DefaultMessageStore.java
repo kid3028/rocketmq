@@ -854,14 +854,21 @@ public class DefaultMessageStore implements MessageStore {
         return this.commitLog.getData(offset);
     }
 
+    /**
+     * 将消息写入commitLog
+     * @param startOffset starting offset.
+     * @param data data to append.
+     * @return
+     */
     @Override
     public boolean appendToCommitLog(long startOffset, byte[] data) {
         if (this.shutdown) {
             log.warn("message store has shutdown, so appendToPhyQueue is forbidden");
             return false;
         }
-
+        // 将具体的消息写入commitLog
         boolean result = this.commitLog.appendData(startOffset, data);
+        // 如果成功，唤醒ReputMessageService
         if (result) {
             this.reputMessageService.wakeup();
         } else {
@@ -1919,6 +1926,7 @@ public class DefaultMessageStore implements MessageStore {
 
             while (!this.isStopped()) {
                 try {
+                    // 每隔1ms执行一次doReput，实时将消息转发给消息消费队里与索引文件，更新dispatcherPosition，并向服务端即使反馈当前已存储进度
                     Thread.sleep(1);
                     this.doReput();
                 } catch (Exception e) {
