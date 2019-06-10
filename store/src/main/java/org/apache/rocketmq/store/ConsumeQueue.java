@@ -93,9 +93,11 @@ public class ConsumeQueue {
     }
 
     public void recover() {
+        // 获取到该MappedFileQueue下所有MappedFile
         final List<MappedFile> mappedFiles = this.mappedFileQueue.getMappedFiles();
         if (!mappedFiles.isEmpty()) {
 
+            // -3 ???
             int index = mappedFiles.size() - 3;
             if (index < 0)
                 index = 0;

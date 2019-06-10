@@ -1316,19 +1316,35 @@ public class DefaultMessageStore implements MessageStore {
         return file.exists();
     }
 
+    /**
+     * CommitQueue文件规则
+     * comsumequeue的目录结构为comsumequeue/{topicName}/{queueId}/{fileName},文件默认大小600w byte
+     * 文件命名规则:00_000_000_000_000_000_000 、 00_000_000_000_006_000_000 、00_000_000_000_012_000_000
+     * 文件内存储的数据格式：commitlog offset(commitlog文件物理偏移量 8byte) + size(消息大小 4byte) + tagsCode(tag的hashcode 8byte)，每条占用20byte，每个文件最多存储30w条
+     *
+     * 消息查找
+     * 从consumequeue读取消息，根据（commitLog offset）/ 1073741824 = N 得到在第N+1个commitLog文件中，
+     * 消息的开始位置(commitLog offset) - (1073741824 * N) = fileOffset，从offset字节开始读取，读取长度在首个4字节中
+     *
+     * @return
+     */
     private boolean loadConsumeQueue() {
+        // comsumequeue的目录结构为comsumequeue/{topicName}/{queueId}/{fileName}
         File dirLogic = new File(StorePathConfigHelper.getStorePathConsumeQueue(this.messageStoreConfig.getStorePathRootDir()));
+        // 所有topic目录
         File[] fileTopicList = dirLogic.listFiles();
         if (fileTopicList != null) {
 
             for (File fileTopic : fileTopicList) {
+                // topic
                 String topic = fileTopic.getName();
-
+                // queueId目录
                 File[] fileQueueIdList = fileTopic.listFiles();
                 if (fileQueueIdList != null) {
                     for (File fileQueueId : fileQueueIdList) {
                         int queueId;
                         try {
+                            // queueId
                             queueId = Integer.parseInt(fileQueueId.getName());
                         } catch (NumberFormatException e) {
                             continue;
@@ -1379,6 +1395,12 @@ public class DefaultMessageStore implements MessageStore {
         return transientStorePool;
     }
 
+    /**
+     * 将consumeQueue放入topic集合下
+     * @param topic
+     * @param queueId
+     * @param consumeQueue
+     */
     private void putConsumeQueue(final String topic, final int queueId, final ConsumeQueue consumeQueue) {
         ConcurrentMap<Integer/* queueId */, ConsumeQueue> map = this.consumeQueueTable.get(topic);
         if (null == map) {
@@ -1390,6 +1412,9 @@ public class DefaultMessageStore implements MessageStore {
         }
     }
 
+    /**
+     * 恢复消费队列
+     */
     private void recoverConsumeQueue() {
         for (ConcurrentMap<Integer, ConsumeQueue> maps : this.consumeQueueTable.values()) {
             for (ConsumeQueue logic : maps.values()) {

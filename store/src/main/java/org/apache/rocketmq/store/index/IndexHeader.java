@@ -41,6 +41,12 @@ public class IndexHeader {
         this.byteBuffer = byteBuffer;
     }
 
+    /**
+     * header 40byte
+     * +--------------------------+--------------------------+-------------------------------+--------------------------------+----------------------+-----------------+
+     * | 第一个message时间戳 8byte  |最后一个message时间戳 8byte  | 第一个message的物理offset 8byte | 最后一个message的物理offset 8byte | hash slot的个数 4byte | 目前索引个数 4byte |
+     * +-------------------------+--------------------------+-------------------------------+--------------------------------+----------------------+------------------+
+     */
     public void load() {
         this.beginTimestamp.set(byteBuffer.getLong(beginTimestampIndex));
         this.endTimestamp.set(byteBuffer.getLong(endTimestampIndex));

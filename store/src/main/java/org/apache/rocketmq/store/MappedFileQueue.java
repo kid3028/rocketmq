@@ -156,6 +156,7 @@ public class MappedFileQueue {
                 }
 
                 try {
+                    // 单个MappedFile大小默认是1G org.apache.rocketmq.store.config.MessageStoreConfig.mapedFileSizeCommitLog
                     MappedFile mappedFile = new MappedFile(file.getPath(), mappedFileSize);
 
                     mappedFile.setWrotePosition(this.mappedFileSize);
@@ -188,10 +189,25 @@ public class MappedFileQueue {
         return 0;
     }
 
+    /**
+     * 1.commitLog文件生成规则
+     *     00_000_000_001_073_741_824 完整文件名为20位数，
+     *     fileName = 00000000001073741824
+     *     fileFromOffset = 1073741824
+     *    偏移量：每个CommitLog文件的大小默认时1G，一般情况下第一个CommitLog的起始偏移量为0，
+     *    第二个CommitLog的CommitLog的起始偏移量为1073741824(1G=1073741842byte)
+     * 2.怎么知道消息存储在哪个CommitLog文件上？
+     *    假设1073742827为物理偏移量(物理偏移量即全局偏移量)，则其对应的相对偏移量为1003（1073742827-1073741824），并且该偏移量位于第二个CommitLog。
+     * index和ConsumeQueue中都有消息对应的物理偏移量，通过物理偏移量就可以计算出该消息位于那个CommitLog文件上
+     * @param startOffset
+     * @param needCreate
+     * @return
+     */
     public MappedFile getLastMappedFile(final long startOffset, boolean needCreate) {
         long createOffset = -1;
         MappedFile mappedFileLast = getLastMappedFile();
 
+        // 如果mappedFileLast为空或者已满，则计算新文件的物理偏移量
         if (mappedFileLast == null) {
             createOffset = startOffset - (startOffset % this.mappedFileSize);
         }
@@ -201,6 +217,7 @@ public class MappedFileQueue {
         }
 
         if (createOffset != -1 && needCreate) {
+            // 通过物理偏移量获取文件名
             String nextFilePath = this.storePath + File.separator + UtilAll.offset2FileName(createOffset);
             String nextNextFilePath = this.storePath + File.separator
                 + UtilAll.offset2FileName(createOffset + this.mappedFileSize);

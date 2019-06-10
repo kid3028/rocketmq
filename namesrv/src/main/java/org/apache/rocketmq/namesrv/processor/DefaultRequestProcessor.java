@@ -143,6 +143,13 @@ public class DefaultRequestProcessor implements NettyRequestProcessor {
         return false;
     }
 
+    /**
+     * 设置KV配置
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     public RemotingCommand putKVConfig(ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
         final RemotingCommand response = RemotingCommand.createResponseCommand(null);
