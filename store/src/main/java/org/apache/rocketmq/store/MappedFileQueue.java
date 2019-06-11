@@ -205,6 +205,7 @@ public class MappedFileQueue {
      */
     public MappedFile getLastMappedFile(final long startOffset, boolean needCreate) {
         long createOffset = -1;
+        // 最新一个mappedFile
         MappedFile mappedFileLast = getLastMappedFile();
 
         // 如果mappedFileLast为空或者已满，则计算新文件的物理偏移量
@@ -251,6 +252,10 @@ public class MappedFileQueue {
         return getLastMappedFile(startOffset, true);
     }
 
+    /**
+     * 从mappedFiles中获取到最新一个mappedFile
+     * @return
+     */
     public MappedFile getLastMappedFile() {
         MappedFile mappedFileLast = null;
 
@@ -443,10 +448,13 @@ public class MappedFileQueue {
 
     public boolean flush(final int flushLeastPages) {
         boolean result = true;
+        // 找到上次刷新到的位置，得到当前的MappedFile对象
         MappedFile mappedFile = this.findMappedFileByOffset(this.flushedWhere, this.flushedWhere == 0);
         if (mappedFile != null) {
             long tmpTimeStamp = mappedFile.getStoreTimestamp();
+            // 执行MappedFile的flush方法
             int offset = mappedFile.flush(flushLeastPages);
+            // 更新刷新位置
             long where = mappedFile.getFileFromOffset() + offset;
             result = where == this.flushedWhere;
             this.flushedWhere = where;

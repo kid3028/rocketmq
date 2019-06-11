@@ -43,27 +43,41 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class MappedFile extends ReferenceResource {
+    // os page 4k
     public static final int OS_PAGE_SIZE = 1024 * 4;
     protected static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
-
+    //  所有MappedFile实例已使用的字节总数
     private static final AtomicLong TOTAL_MAPPED_VIRTUAL_MEMORY = new AtomicLong(0);
-
+    // MappedFile个数
     private static final AtomicInteger TOTAL_MAPPED_FILES = new AtomicInteger(0);
+
+    // 当前MappedFile对象当前写指针
     protected final AtomicInteger wrotePosition = new AtomicInteger(0);
     //ADD BY ChenYang
+    // 当前提交的指针
     protected final AtomicInteger committedPosition = new AtomicInteger(0);
+    // 当前刷写到磁盘的指针
     private final AtomicInteger flushedPosition = new AtomicInteger(0);
+    // 文件总大小
     protected int fileSize;
+    // 文件通道
     protected FileChannel fileChannel;
     /**
      * Message will put to here first, and then reput to FileChannel if writeBuffer is not null.
+     * 写Buffer，message先写入该buffer，然后再写到FileChannel
      */
     protected ByteBuffer writeBuffer = null;
+    // ByteBuffer的缓冲池，一个commitLog file对应一个DirectByteBuffer
     protected TransientStorePool transientStorePool = null;
+    // 文件名称
     private String fileName;
+    // 文件偏移量
     private long fileFromOffset;
+    // 文件对象
     private File file;
+    // 内存文件映射
     private MappedByteBuffer mappedByteBuffer;
+    // 最后一次存储时间
     private volatile long storeTimestamp = 0;
     private boolean firstCreateInQueue = false;
 
@@ -144,6 +158,13 @@ public class MappedFile extends ReferenceResource {
         return TOTAL_MAPPED_VIRTUAL_MEMORY.get();
     }
 
+    /**
+     * 初始化
+     * @param fileName
+     * @param fileSize
+     * @param transientStorePool
+     * @throws IOException
+     */
     public void init(final String fileName, final int fileSize,
         final TransientStorePool transientStorePool) throws IOException {
         init(fileName, fileSize);
@@ -151,6 +172,12 @@ public class MappedFile extends ReferenceResource {
         this.transientStorePool = transientStorePool;
     }
 
+    /**
+     * 初始化FileChannel、MappedByteBuffer
+     * @param fileName
+     * @param fileSize
+     * @throws IOException
+     */
     private void init(final String fileName, final int fileSize) throws IOException {
         this.fileName = fileName;
         this.fileSize = fileSize;
@@ -191,6 +218,12 @@ public class MappedFile extends ReferenceResource {
         return fileChannel;
     }
 
+    /**
+     * 消息写入
+     * @param msg
+     * @param cb
+     * @return
+     */
     public AppendMessageResult appendMessage(final MessageExtBrokerInner msg, final AppendMessageCallback cb) {
         return appendMessagesInner(msg, cb);
     }
@@ -295,6 +328,7 @@ public class MappedFile extends ReferenceResource {
     }
 
     /**
+     * 刷写逻辑：调用FileChannel或者MappedByteBuffer的force方法
      * @return The current flushed position
      */
     public int flush(final int flushLeastPages) {

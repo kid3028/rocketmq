@@ -34,11 +34,15 @@ public class MessageStoreConfig {
     // CommitLog file size,default is 1G  commitlog文件默认大小，1G
     // https://blog.csdn.net/prestigeding/article/details/75799003
     private int mapedFileSizeCommitLog = 1024 * 1024 * 1024;
-    // ConsumeQueue file size,default is 30W
+    // ConsumeQueue file size,default is 30W consumeQueue存放的是定长的信息(20个字节 offset size tagsCode)
     private int mapedFileSizeConsumeQueue = 300000 * ConsumeQueue.CQ_STORE_UNIT_SIZE;
     // enable consume queue ext
+    /**
+     * 是否开启consumeQeueuExt，默认是false，就是输入消费端消费速度跟不上，是否创建一个扩展的ConsumeQueue文件，
+     * 如果不开启，可能阻塞从commitlog文件中获取消息，并且ConsumeQueue是按照topic独立的
+     */
     private boolean enableConsumeQueueExt = false;
-    // ConsumeQueue extend file size, 48M
+    // ConsumeQueue extend file size, 48M 扩展ConsumeQueue文件大小，默认是48M
     private int mappedFileSizeConsumeQueueExt = 48 * 1024 * 1024;
     // Bit count of filter bit map.
     // this will be set by pipe of calculate filter bit map.
@@ -46,24 +50,33 @@ public class MessageStoreConfig {
 
     // CommitLog flush interval
     // flush data to disk
+    /**
+     * 刷写commitLog的间隔时间，RocketMQ会启动一个线程，将消息刷写到磁盘，也就是该线程
+     * 每次运行后等待的时间，默认是500ms，flush操作，调用文件通道的force()方法
+     */
     @ImportantField
     private int flushIntervalCommitLog = 500;
 
     // Only used if TransientStorePool enabled
     // flush data to FileChannel
+    /**
+     * 提交消息到CommitLog对应的文件通道的间隔时间，原理上与flushIntervalCommitLog类似，
+     * 将消息写入到文件通道(调用FileChannel#write)，得到最新的写指针，默认是200ms
+     */
     @ImportantField
     private int commitIntervalCommitLog = 200;
 
     /**
      * introduced since 4.0.x. Determine whether to use mutex reentrantLock when putting message.<br/>
      * By default it is set to false indicating using spin lock when putting message.
+     * 在put message是否使用ReentrantLock，将消息按照格式封装成msg放入相关队列时使用的锁机制，自旋和ReentrantLock
      */
     private boolean useReentrantLockWhenPutMessage = false;
 
-    // Whether schedule flush,default is real-time
+    // Whether schedule flush,default is real-time 是否定时刷新commitLog，默认是是实时刷新
     @ImportantField
     private boolean flushCommitLogTimed = false;
-    // ConsumeQueue flush interval
+    // ConsumeQueue flush interval 刷写到CommitQueue的间隔，默认是1s
     private int flushIntervalConsumeQueue = 1000;
     // Resource reclaim interval
     private int cleanResourceInterval = 10000;
@@ -73,14 +86,14 @@ public class MessageStoreConfig {
     private int deleteConsumeQueueFilesInterval = 100;
     private int destroyMapedFileIntervalForcibly = 1000 * 120;
     private int redeleteHangedFileInterval = 1000 * 120;
-    // When to delete,default is at 4 am
+    // When to delete,default is at 4 am 默认凌晨4点删除过期文件
     @ImportantField
     private String deleteWhen = "04";
     private int diskMaxUsedSpaceRatio = 75;
-    // The number of hours to keep a log file before deleting it (in hours)
+    // The number of hours to keep a log file before deleting it (in hours) 文件保留72小时
     @ImportantField
     private int fileReservedTime = 72;
-    // Flow control for ConsumeQueue
+    // Flow control for ConsumeQueue  流量控制参数
     private int putMsgIndexHightWater = 600000;
     // The maximum size of a single log file,default is 512K
     private int maxMessageSize = 1024 * 1024 * 4;
@@ -88,7 +101,7 @@ public class MessageStoreConfig {
     // This ensures no on-the-wire or on-disk corruption to the messages occurred.
     // This check adds some overhead,so it may be disabled in cases seeking extreme performance.
     private boolean checkCRCOnRecover = true;
-    // How many pages are to be flushed when flush CommitLog
+    // How many pages are to be flushed when flush CommitLog 每次flush commitLog时最小发生变化的页数，如果不足改值，本次不进行刷写操作
     private int flushCommitLogLeastPages = 4;
     // How many pages are to be committed when commit data to file
     private int commitCommitLogLeastPages = 4;

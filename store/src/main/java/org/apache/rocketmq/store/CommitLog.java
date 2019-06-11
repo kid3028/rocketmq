@@ -370,24 +370,31 @@ public class CommitLog {
         return new DispatchRequest(-1, false /* success */);
     }
 
+    /**
+     * 计算消息存储长度 消息存储格式
+     * @param bodyLength
+     * @param topicLength
+     * @param propertiesLength
+     * @return
+     */
     private static int calMsgLength(int bodyLength, int topicLength, int propertiesLength) {
-        final int msgLen = 4 //TOTALSIZE
+        final int msgLen = 4 //TOTALSIZE  消息总长度
             + 4 //MAGICCODE
             + 4 //BODYCRC
-            + 4 //QUEUEID
-            + 4 //FLAG
-            + 8 //QUEUEOFFSET
-            + 8 //PHYSICALOFFSET
-            + 4 //SYSFLAG
-            + 8 //BORNTIMESTAMP
-            + 8 //BORNHOST
-            + 8 //STORETIMESTAMP
-            + 8 //STOREHOSTADDRESS
-            + 4 //RECONSUMETIMES
-            + 8 //Prepared Transaction Offset
-            + 4 + (bodyLength > 0 ? bodyLength : 0) //BODY
-            + 1 + topicLength //TOPIC
-            + 2 + (propertiesLength > 0 ? propertiesLength : 0) //propertiesLength
+            + 4 //QUEUEID 消息队列Id
+            + 4 //FLAG 标记位
+            + 8 //QUEUEOFFSET 消息队列偏移量
+            + 8 //PHYSICALOFFSET 物理偏移量
+            + 4 //SYSFLAG 系统标记
+            + 8 //BORNTIMESTAMP born存储时间戳
+            + 8 //BORNHOST broker地址，包含端口
+            + 8 //STORETIMESTAMP 存储时间戳
+            + 8 //STOREHOSTADDRESS 存储地址，包含端口
+            + 4 //RECONSUMETIMES 消息消费重试次数
+            + 8 //Prepared Transaction Offset prepare消息偏移量
+            + 4 + (bodyLength > 0 ? bodyLength : 0) //BODY 4字节body长度 + 具体的消息内容
+            + 1 + topicLength //TOPIC  1字节topic长度域topic内容
+            + 2 + (propertiesLength > 0 ? propertiesLength : 0) //propertiesLength 2字节消息属性长度 + 具体的扩展属性
             + 0;
         return msgLen;
     }
@@ -1136,6 +1143,7 @@ public class CommitLog {
     }
 
     public static class GroupCommitRequest {
+        // 下一个点点的偏移量
         private final long nextOffset;
         private final CountDownLatch countDownLatch = new CountDownLatch(1);
         private volatile boolean flushOK = false;
@@ -1176,6 +1184,7 @@ public class CommitLog {
     }
 
     /**
+     * 同步刷写服务，一个线程一直的处理同步刷写任务，每处理一个循环后等待10ms，一旦新任务到达，立即唤醒执行任务
      * GroupCommit Service
      */
     class GroupCommitService extends FlushCommitLogService {
@@ -1208,10 +1217,11 @@ public class CommitLog {
                             flushOK = CommitLog.this.mappedFileQueue.getFlushedWhere() >= req.getNextOffset();
 
                             if (!flushOK) {
+                                // 执行刷盘
                                 CommitLog.this.mappedFileQueue.flush(0);
                             }
                         }
-
+                        // 唤醒用户线程
                         req.wakeupCustomer(flushOK);
                     }
 
@@ -1301,10 +1311,10 @@ public class CommitLog {
 
         /**
          * 回调callback类将数据写入到buffer中，消息的序列化和保存在这里完成
-         * @param fileFromOffset
-         * @param byteBuffer
-         * @param maxBlank
-         * @param msgInner
+         * @param fileFromOffset 该文件在整个文件序列中的偏移量
+         * @param byteBuffer buffer
+         * @param maxBlank 最大可写字节数
+         * @param msgInner msgInner
          * @return
          */
         public AppendMessageResult doAppend(final long fileFromOffset, final ByteBuffer byteBuffer, final int maxBlank,
@@ -1320,7 +1330,8 @@ public class CommitLog {
 
             this.resetByteBuffer(hostHolder, 8);
             /**
-             * 生成messageID， 前8位是host，后8位是wroteOffset，目的是便于使用msgId来查询消息
+             * 20 byte
+             * 生成messageID， 前8位是host(ip 4byte )，后8位是wroteOffset，目的是便于使用msgId来查询消息
              * 这个id是由broker的host和offset拼接起来的，所以很容易根据id得到这个消息存储在哪个broker的哪个文件中，根据id查询消息速度非常快
              */
             String msgId = MessageDecoder.createMessageId(this.msgIdMemory, msgInner.getStoreHostBytes(hostHolder), wroteOffset);
@@ -1332,6 +1343,8 @@ public class CommitLog {
             keyBuilder.append(msgInner.getQueueId());
             String key = keyBuilder.toString();
             /**
+             * key : topic-queueId
+             * 通过topic-queueId获取该队里的偏移地址，待写入的地址，新增一个键值对，当前偏移量为0
              * 取得具体queue的offset，值是当前queue里的第几条消息
              * 消息在queue中的偏移量，这个偏移量值是消息在queue中的序号，从0开始。比如queue中第10条消息的offset就是9
              */
@@ -1347,7 +1360,7 @@ public class CommitLog {
             switch (tranType) {
                 // Prepared and Rollback message is not consumed, will not enter the
                 // consumer queuec
-                // 事务消息
+                // prepare rollback类型的消息进入consum队列
                 case MessageSysFlag.TRANSACTION_PREPARED_TYPE:
                 case MessageSysFlag.TRANSACTION_ROLLBACK_TYPE:
                     queueOffset = 0L;
@@ -1367,6 +1380,7 @@ public class CommitLog {
 
             final int propertiesLength = propertiesData == null ? 0 : propertiesData.length;
 
+            // 消息的附加属性长度不能超过65536个字节
             if (propertiesLength > Short.MAX_VALUE) {
                 log.warn("putMessage message properties length too long. length={}", propertiesData.length);
                 return new AppendMessageResult(AppendMessageStatus.PROPERTIES_SIZE_EXCEEDED);
@@ -1407,7 +1421,7 @@ public class CommitLog {
             }
 
             // Initialization of storage space
-            // 按照commitLog的格式要求拼装写入ByteBuffer
+            // 按照commitLog的格式要求拼装写入ByteBuffer(mappedFile内存中)
             this.resetByteBuffer(msgStoreItemMemory, msgLen);
             // 1 TOTALSIZE
             this.msgStoreItemMemory.putInt(msgLen);
