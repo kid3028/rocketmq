@@ -219,10 +219,10 @@ public class MappedFile extends ReferenceResource {
     }
 
     /**
-     * 消息写入
+     * 消息写入到MappedFile中(内存，ByteBuffer或者MappedByteBuffer)
      * @param msg
      * @param cb
-     * @return
+     * @return 返回追加结果，成功、消息长度超出、消息属性长度超出、未知错误
      */
     public AppendMessageResult appendMessage(final MessageExtBrokerInner msg, final AppendMessageCallback cb) {
         return appendMessagesInner(msg, cb);
@@ -233,10 +233,10 @@ public class MappedFile extends ReferenceResource {
     }
 
     /**
-     * MappedFile消息写入
+     * MappedFile消息写入(内存，ByteBuffer或者MappedByteBuffer)
      * @param messageExt
      * @param cb
-     * @return
+     * @return 返回追加结果，成功、消息长度超出、消息属性长度超出、未知错误
      */
     public AppendMessageResult appendMessagesInner(final MessageExt messageExt, final AppendMessageCallback cb) {
         assert messageExt != null;
@@ -362,6 +362,7 @@ public class MappedFile extends ReferenceResource {
             //no need to commit data to file channel, so just regard wrotePosition as committedPosition.
             return this.wrotePosition.get();
         }
+        // 是否符合最小提交页
         if (this.isAbleToCommit(commitLeastPages)) {
             if (this.hold()) {
                 commit0(commitLeastPages);
@@ -380,6 +381,10 @@ public class MappedFile extends ReferenceResource {
         return this.committedPosition.get();
     }
 
+    /**
+     * 通过fileChannel#write方法将数据写入
+     * @param commitLeastPages
+     */
     protected void commit0(final int commitLeastPages) {
         int writePos = this.wrotePosition.get();
         int lastCommittedPosition = this.committedPosition.get();
@@ -413,18 +418,32 @@ public class MappedFile extends ReferenceResource {
         return write > flush;
     }
 
+    /**
+     * 是否可以提交
+     *   1.文件已满可以提交
+     *   2.写入量已经到达最小需要提交的页数，可以提交
+     * @param commitLeastPages
+     * @return
+     */
     protected boolean isAbleToCommit(final int commitLeastPages) {
+        // 上次刷新偏移量
         int flush = this.committedPosition.get();
+        // 当前写偏移量
         int write = this.wrotePosition.get();
 
+        // 如果文件已满，返回true
         if (this.isFull()) {
             return true;
         }
 
+        /**
+         * 如果commitLeastPages大于0，则需要判断当前写入的偏移量和上次刷新偏移量之间的间隔，
+         * 如果超过commitLeastPages页数，则提交，否则本次不提交
+         */
         if (commitLeastPages > 0) {
             return ((write / OS_PAGE_SIZE) - (flush / OS_PAGE_SIZE)) >= commitLeastPages;
         }
-
+        // 如果没有新数据写入，本体提交任务结束
         return write > flush;
     }
 

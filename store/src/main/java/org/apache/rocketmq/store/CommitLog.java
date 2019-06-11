@@ -37,6 +37,13 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /**
+ * CommitLog存储，主要是先写入到MappedFile(MappedByteBuffer或者FileChannel中(内存))，
+ * 此过程多个线程是串行执行，然后根据不同的磁盘刷写方法进行刷盘操作，主从同步，然后返回，最后返回结果
+ *
+ * 消息存储到CommitLog文件的过程，大概可以分为三步：
+ *    1.消息追加，也就是将消息追加到CommitLog文件对应的内存映射区(这个过程是加锁的，非并发)
+ *    2.刷盘阶段(并发)，将内存区数据刷写到磁盘文件(支持同步、异步)
+ *    3.主从同步
  * Store all metadata downtime for recovery, data protection reliability
  */
 public class CommitLog {
@@ -1008,6 +1015,10 @@ public class CommitLog {
         protected static final int RETRY_TIMES_OVER = 10;
     }
 
+
+    /**
+     * 提交
+     */
     class CommitRealTimeService extends FlushCommitLogService {
 
         private long lastCommitTimestamp = 0;
@@ -1021,8 +1032,9 @@ public class CommitLog {
         public void run() {
             CommitLog.log.info(this.getServiceName() + " service started");
             while (!this.isStopped()) {
+                // 线程循环间隔，默认200ms
                 int interval = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getCommitIntervalCommitLog();
-
+                // 每次提交到文件中，至少需要多少个页，默认4页
                 int commitDataLeastPages = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getCommitCommitLogLeastPages();
 
                 int commitDataThoroughInterval =
@@ -1035,6 +1047,7 @@ public class CommitLog {
                 }
 
                 try {
+                    // 提交
                     boolean result = CommitLog.this.mappedFileQueue.commit(commitDataLeastPages);
                     long end = System.currentTimeMillis();
                     if (!result) {
@@ -1061,6 +1074,9 @@ public class CommitLog {
         }
     }
 
+    /**
+     * 刷盘
+     */
     class FlushRealTimeService extends FlushCommitLogService {
         private long lastFlushTimestamp = 0;
         private long printTimes = 0;
@@ -1071,7 +1087,9 @@ public class CommitLog {
             while (!this.isStopped()) {
                 boolean flushCommitLogTimed = CommitLog.this.defaultMessageStore.getMessageStoreConfig().isFlushCommitLogTimed();
 
+                // 异步刷新线程，每次处理完一批任务后的等待时间，默认500ms
                 int interval = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushIntervalCommitLog();
+                // 每次刷写到磁盘(commitLog)，至少需要多个少个页，默认4页
                 int flushPhysicQueueLeastPages = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushCommitLogLeastPages();
 
                 int flushPhysicQueueThoroughInterval =
@@ -1196,8 +1214,8 @@ public class CommitLog {
                 this.requestsWrite.add(request);
             }
             if (hasNotified.compareAndSet(false, true)) {
-                waitPoint.countDown(); // notify
             }
+            waitPoint.countDown(); // notify
         }
 
         private void swapRequests() {
