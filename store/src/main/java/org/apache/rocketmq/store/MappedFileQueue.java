@@ -26,21 +26,32 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+/**
+ * MappedFile的队列，MappedFile的容器
+ * MappedFile代表一个个物理文件，而MappedFileQueue代表由一个个MappedFile组成的一个连续逻辑的大文件，
+ * 并且每一个MappedFile的命名已经用整个文件序列中的偏移量来表示
+ */
 public class MappedFileQueue {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
     private static final InternalLogger LOG_ERROR = InternalLoggerFactory.getLogger(LoggerName.STORE_ERROR_LOGGER_NAME);
 
     private static final int DELETE_FILES_BATCH_MAX = 10;
 
+    // 文件存储路径
     private final String storePath;
 
+    // 单个MappedFile文件长度
     private final int mappedFileSize;
 
+    // mappedFile集合
     private final CopyOnWriteArrayList<MappedFile> mappedFiles = new CopyOnWriteArrayList<MappedFile>();
 
+    // 创建MappedFileService
     private final AllocateMappedFileService allocateMappedFileService;
 
+    // 整个刷新的偏移量，针对该MappedFileQueue
     private long flushedWhere = 0;
+    // 当前提交的偏移量，针对该MappedFileQueue commit与flush的区别
     private long committedWhere = 0;
 
     private volatile long storeTimestamp = 0;
@@ -476,8 +487,13 @@ public class MappedFileQueue {
 
     public boolean commit(final int commitLeastPages) {
         boolean result = true;
+        // 根据committedWhere找到具体的MappedFile文件
         MappedFile mappedFile = this.findMappedFileByOffset(this.committedWhere, this.committedWhere == 0);
         if (mappedFile != null) {
+            /**
+             * 调用MappedFile的commit函数
+             * 返回的是当前commit的偏移量，加上该文件开始的偏移量，表示MappedFileQueue当前的提交偏移量
+             */
             int offset = mappedFile.commit(commitLeastPages);
             long where = mappedFile.getFileFromOffset() + offset;
             result = where == this.committedWhere;

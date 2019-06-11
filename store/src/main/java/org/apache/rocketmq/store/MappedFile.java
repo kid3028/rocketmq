@@ -51,12 +51,13 @@ public class MappedFile extends ReferenceResource {
     // MappedFile个数
     private static final AtomicInteger TOTAL_MAPPED_FILES = new AtomicInteger(0);
 
+    // flushedPosition <= commitedPosition <= wrotePosition <= fileSize
     // 当前MappedFile对象当前写指针
     protected final AtomicInteger wrotePosition = new AtomicInteger(0);
     //ADD BY ChenYang
-    // 当前提交的指针
+    // 上一次提交的指针(transientStorePoolEnable=true时有效)
     protected final AtomicInteger committedPosition = new AtomicInteger(0);
-    // 当前刷写到磁盘的指针
+    // 上一次刷写到磁盘的指针
     private final AtomicInteger flushedPosition = new AtomicInteger(0);
     // 文件总大小
     protected int fileSize;
@@ -65,17 +66,30 @@ public class MappedFile extends ReferenceResource {
     /**
      * Message will put to here first, and then reput to FileChannel if writeBuffer is not null.
      * 写Buffer，message先写入该buffer，然后再写到FileChannel
+     * 如果不为空，内容写入到writeBuffer，然后再重新放入到fileChannel中，这个重新放入就是commit操作
      */
     protected ByteBuffer writeBuffer = null;
-    // ByteBuffer的缓冲池，一个commitLog file对应一个DirectByteBuffer
+    /**
+     * ByteBuffer的缓冲池，一个commitLog file对应一个DirectByteBuffer
+     * 临时存储，只有pool不为空，writeBuffer才会不为空，
+     * 也就是MessageStoreConfig中transientStorePoolEnable设置为tru的时候，才会生效，
+     * 也就是writeBuffer的容器、堆外内存，
+     * 如果为true，消息先直接放入到堆内存中，然后定时commit到堆外内存(FileChannel/MappedByteBuffer)中，
+     * 然后定时flush
+     */
     protected TransientStorePool transientStorePool = null;
     // 文件名称
     private String fileName;
-    // 文件偏移量
+    // 文件偏移量，在整个MappedFile链表中的逻辑偏移量
     private long fileFromOffset;
-    // 文件对象
+    // 文件对象，物理文件
     private File file;
-    // 内存文件映射
+    /**
+     * MappedByteBuffer、FileChannel的内存文件映射
+     * 如果启动了MessageStoreConfig的transientStorePoolEnable=true，消息在追加时，先放到writeBuffer中，
+     * 然后定时commit到FileChannel，然后定时flush。
+     * 如果transientStorePoolEnable=false，则消息追加时，直接存入MappedByteBuffer中，然后定时flush。如果是同步刷盘，那么直接调用flush
+     */
     private MappedByteBuffer mappedByteBuffer;
     // 最后一次存储时间
     private volatile long storeTimestamp = 0;
@@ -357,14 +371,24 @@ public class MappedFile extends ReferenceResource {
         return this.getFlushedPosition();
     }
 
+    /**
+     *
+     * @param commitLeastPages 至少提交的页数，如果当前需要提交的数据所占的页数小于commitLeastPages，则不执行本次提交操作
+     * @return
+     */
     public int commit(final int commitLeastPages) {
+        /**
+         * 如果writeBuffer等于null，则表示IO操作都是直接基于FileChannel，
+         * 此时返回当前可写的位置，作为committedPosition即可
+         */
         if (writeBuffer == null) {
             //no need to commit data to file channel, so just regard wrotePosition as committedPosition.
             return this.wrotePosition.get();
         }
-        // 是否符合最小提交页
+        // 是否符合最小提交页， 如果数据先写入到了writeBuffer中，则需要提交到FileChannel
         if (this.isAbleToCommit(commitLeastPages)) {
             if (this.hold()) {
+                // 执行具体的提交操作
                 commit0(commitLeastPages);
                 this.release();
             } else {
@@ -391,11 +415,14 @@ public class MappedFile extends ReferenceResource {
 
         if (writePos - this.committedPosition.get() > 0) {
             try {
+                // slice，共用同一片内存空间，但是有单独的指针
                 ByteBuffer byteBuffer = writeBuffer.slice();
                 byteBuffer.position(lastCommittedPosition);
                 byteBuffer.limit(writePos);
                 this.fileChannel.position(lastCommittedPosition);
+                // 将ByteBuf当前上一次committedPosition + 当前写位置这些数据全部写入到FileChannel中
                 this.fileChannel.write(byteBuffer);
+                // 更新committedPosition的位置
                 this.committedPosition.set(writePos);
             } catch (Throwable e) {
                 log.error("Error occurred when commit data to FileChannel.", e);

@@ -44,6 +44,15 @@ import java.util.concurrent.TimeUnit;
  *    1.消息追加，也就是将消息追加到CommitLog文件对应的内存映射区(这个过程是加锁的，非并发)
  *    2.刷盘阶段(并发)，将内存区数据刷写到磁盘文件(支持同步、异步)
  *    3.主从同步
+ *
+ *
+ *  刷盘机制
+ *     1.同步刷盘，每次发送消息，消息都直接存储在FileChannel中，使用的是(MappedByteBuffer),然后直接调用force()
+ *     方法刷写磁盘，等到force刷盘成功后，再返回给调用方({@link GroupCommitRequest#waitForFlush(long)}),就是同步调用的实现
+ *     2.异步刷盘
+ *     2.1是否开启内存缓存池，具体参数为{@link org.apache.rocketmq.store.config.MessageStoreConfig#transientStorePoolEnable = true },
+ *     消息在追加时，先放到writeBuffer中，然后定时commit到FileChannel，然后定时flush。
+ *     2.2.未开启内存缓存池，直接存入MappedByteBuffer，然后定时flush，
  * Store all metadata downtime for recovery, data protection reliability
  */
 public class CommitLog {
@@ -737,8 +746,11 @@ public class CommitLog {
              * 是否等待服务器将消息存储完毕再返回(等待刷盘完成)
              */
             if (messageExt.isWaitStoreMsgOK()) {
+                // 创建刷盘任务
                 GroupCommitRequest request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes());
+                // 添加刷盘任务 将任务放入写队列立即返回
                 service.putRequest(request);
+                // 进入等待 超时5s org.apache.rocketmq.store.CommitLog.GroupCommitService.doCommit 执行完之后会唤醒本线程
                 boolean flushOK = request.waitForFlush(this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout());
                 if (!flushOK) {
                     log.error("do groupcommit, wait for flush failed, topic: " + messageExt.getTopic() + " tags: " + messageExt.getTags()
@@ -1113,13 +1125,22 @@ public class CommitLog {
             CommitLog.log.info(this.getServiceName() + " service started");
 
             while (!this.isStopped()) {
+                /**
+                 * flushCommitLogTimed 这个主要事实等待方法，如果为true，
+                 * 则使用Thread.sleep，如果是false，使用waitForRuning
+                 */
                 boolean flushCommitLogTimed = CommitLog.this.defaultMessageStore.getMessageStoreConfig().isFlushCommitLogTimed();
 
-                // 异步刷新线程，每次处理完一批任务后的等待时间，默认500ms
+                // 刷盘间隔时间，异步刷新线程，每次处理完一批任务后的等待时间，默认500ms
                 int interval = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushIntervalCommitLog();
                 // 每次刷写到磁盘(commitLog)，至少需要多个少个页，默认4页
                 int flushPhysicQueueLeastPages = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushCommitLogLeastPages();
 
+                /**
+                 * 如果上次刷新时间+该值 小于 当前时间，则改变flushPhysicQueueLeastPages = 0,
+                 * 并每10次输出异常刷新进度
+                 *
+                 */
                 int flushPhysicQueueThoroughInterval =
                     CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushCommitLogThoroughInterval();
 
@@ -1134,6 +1155,7 @@ public class CommitLog {
                 }
 
                 try {
+                    // flushCommitLogTimed为true使用Thread.sleep(), false使用waitForRun
                     if (flushCommitLogTimed) {
                         Thread.sleep(interval);
                     } else {
@@ -1145,9 +1167,11 @@ public class CommitLog {
                     }
 
                     long begin = System.currentTimeMillis();
+                    // 调用刷盘任务
                     CommitLog.this.mappedFileQueue.flush(flushPhysicQueueLeastPages);
                     long storeTimestamp = CommitLog.this.mappedFileQueue.getStoreTimestamp();
                     if (storeTimestamp > 0) {
+                        // 设置检测点StoreCheckPoint的physicMsgTimestamp(commitLog文件的检测点，也就是记录最新刷盘时间的时间戳)
                         CommitLog.this.defaultMessageStore.getStoreCheckpoint().setPhysicMsgTimestamp(storeTimestamp);
                     }
                     long past = System.currentTimeMillis() - begin;
@@ -1220,6 +1244,7 @@ public class CommitLog {
          */
         public boolean waitForFlush(long timeout) {
             try {
+                // 这里会进入等待
                 this.countDownLatch.await(timeout, TimeUnit.MILLISECONDS);
                 return this.flushOK;
             } catch (InterruptedException e) {
@@ -1234,9 +1259,12 @@ public class CommitLog {
      * GroupCommit Service
      */
     class GroupCommitService extends FlushCommitLogService {
+        // 写队列，主要用于向该线程添加刷盘任务
         private volatile List<GroupCommitRequest> requestsWrite = new ArrayList<GroupCommitRequest>();
+        // 读队列，主要用于执行特定的刷盘任务，这是GroupCommitService设计的一个亮点，，把读写分离，每次处理完requestRead中的任务，就交换两个队列
         private volatile List<GroupCommitRequest> requestsRead = new ArrayList<GroupCommitRequest>();
 
+        // 添加刷盘任务
         public synchronized void putRequest(final GroupCommitRequest request) {
             synchronized (this.requestsWrite) {
                 this.requestsWrite.add(request);
@@ -1246,6 +1274,9 @@ public class CommitLog {
             waitPoint.countDown(); // notify
         }
 
+        /**
+         * 交换读写队列
+         */
         private void swapRequests() {
             List<GroupCommitRequest> tmp = this.requestsWrite;
             this.requestsWrite = this.requestsRead;
@@ -1271,6 +1302,7 @@ public class CommitLog {
                         req.wakeupCustomer(flushOK);
                     }
 
+                    // 更新checkPoint
                     long storeTimestamp = CommitLog.this.mappedFileQueue.getStoreTimestamp();
                     if (storeTimestamp > 0) {
                         CommitLog.this.defaultMessageStore.getStoreCheckpoint().setPhysicMsgTimestamp(storeTimestamp);
