@@ -161,9 +161,11 @@ public class CommitLog {
      * @return
      */
     public SelectMappedBufferResult getData(final long offset, final boolean returnFirstOnNotFound) {
+        // 每个文件的大小
         int mappedFileSize = this.defaultMessageStore.getMessageStoreConfig().getMapedFileSizeCommitLog();
         MappedFile mappedFile = this.mappedFileQueue.findMappedFileByOffset(offset, returnFirstOnNotFound);
         if (mappedFile != null) {
+            // 获取到相对offset 商N是第N+1个文件，余数是相对第N+1个文件的偏移量
             int pos = (int) (offset % mappedFileSize);
             SelectMappedBufferResult result = mappedFile.selectMappedBuffer(pos);
             return result;
@@ -420,10 +422,12 @@ public class CommitLog {
         final List<MappedFile> mappedFiles = this.mappedFileQueue.getMappedFiles();
         if (!mappedFiles.isEmpty()) {
             // Looking beginning to recover from which file
+            // 从最后一个文件开始检查
             int index = mappedFiles.size() - 1;
             MappedFile mappedFile = null;
             for (; index >= 0; index--) {
                 mappedFile = mappedFiles.get(index);
+                // 从最后一个文件开始检测，先找到第一个正常的commitLog文件，然后从该文件开始恢复
                 if (this.isMappedFileMatchedRecover(mappedFile)) {
                     log.info("recover from this mapped file " + mappedFile.getFileName());
                     break;
@@ -439,6 +443,7 @@ public class CommitLog {
             long processOffset = mappedFile.getFileFromOffset();
             long mappedFileOffset = 0;
             while (true) {
+                // 创建转发对象
                 DispatchRequest dispatchRequest = this.checkMessageAndReturnSize(byteBuffer, checkCRCOnRecover);
                 int size = dispatchRequest.getMsgSize();
 
@@ -446,6 +451,7 @@ public class CommitLog {
                 if (size > 0) {
                     mappedFileOffset += size;
 
+                    // 转发给对象，会同步更新commitqueue、index文件
                     if (this.defaultMessageStore.getMessageStoreConfig().isDuplicationEnable()) {
                         if (dispatchRequest.getCommitLogOffset() < this.defaultMessageStore.getConfirmOffset()) {
                             this.defaultMessageStore.doDispatch(dispatchRequest);
@@ -495,19 +501,31 @@ public class CommitLog {
         }
     }
 
+    /**
+     * 查找正常的文件
+     *    1.魔数正确
+     *    2.消息存储时间不为0
+     *    3.存储时间小于等于检测时间点
+     * 三个条件都满足即为正常文件
+     * @param mappedFile
+     * @return
+     */
     private boolean isMappedFileMatchedRecover(final MappedFile mappedFile) {
         ByteBuffer byteBuffer = mappedFile.sliceByteBuffer();
 
+        // 魔数正确
         int magicCode = byteBuffer.getInt(MessageDecoder.MESSAGE_MAGIC_CODE_POSTION);
         if (magicCode != MESSAGE_MAGIC_CODE) {
             return false;
         }
 
+        // 消息存储时间不为0
         long storeTimestamp = byteBuffer.getLong(MessageDecoder.MESSAGE_STORE_TIMESTAMP_POSTION);
         if (0 == storeTimestamp) {
             return false;
         }
 
+        // 存储时间小于等于检测点
         if (this.defaultMessageStore.getMessageStoreConfig().isMessageIndexEnable()
             && this.defaultMessageStore.getMessageStoreConfig().isMessageIndexSafe()) {
             if (storeTimestamp <= this.defaultMessageStore.getStoreCheckpoint().getMinTimestampIndex()) {
@@ -706,7 +724,7 @@ public class CommitLog {
 
     /**
      * 刷盘
-     * @param result
+     * @param result 写入到MappedFile(内存映射文件中、ByteBuffer中)的结果
      * @param putMessageResult
      * @param messageExt
      */
@@ -931,10 +949,20 @@ public class CommitLog {
         return -1;
     }
 
+    /**
+     * 根据offset找到所在的commitLog文件，commitLog文件封装成MappedFile(内存映射文件)，
+     * 然后直接从相对offset开始，读取指定的字节(消息的长度，从相对offset开始先读取4个字节，就能获取到该消息的从长度)
+     * @param offset
+     * @param size
+     * @return
+     */
     public SelectMappedBufferResult getMessage(final long offset, final int size) {
+        // 每个MappedFile的大小 1G
         int mappedFileSize = this.defaultMessageStore.getMessageStoreConfig().getMapedFileSizeCommitLog();
+        // 根据绝对offset找到对应的MappedFile 如果offset等于0返回第一个
         MappedFile mappedFile = this.mappedFileQueue.findMappedFileByOffset(offset, offset == 0);
         if (mappedFile != null) {
+            // pos：相对offset
             int pos = (int) (offset % mappedFileSize);
             return mappedFile.selectMappedBuffer(pos, size);
         }

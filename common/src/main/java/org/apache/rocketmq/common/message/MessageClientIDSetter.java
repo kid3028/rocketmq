@@ -16,11 +16,12 @@
  */
 package org.apache.rocketmq.common.message;
 
+import org.apache.rocketmq.common.UtilAll;
+
 import java.nio.ByteBuffer;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.apache.rocketmq.common.UtilAll;
 
 public class MessageClientIDSetter {
     private static final String TOPIC_KEY_SPLITTER = "#";
@@ -31,6 +32,7 @@ public class MessageClientIDSetter {
     private static long nextStartTime;
 
     static {
+        // 16
         LEN = 4 + 2 + 4 + 4 + 2;
         ByteBuffer tempBuffer = ByteBuffer.allocate(10);
         tempBuffer.position(2);
@@ -99,6 +101,10 @@ public class MessageClientIDSetter {
         return result;
     }
 
+    /**
+     * uniqKey具体算法
+     * @return
+     */
     public static String createUniqID() {
         StringBuilder sb = new StringBuilder(LEN * 2);
         sb.append(FIX_STRING);

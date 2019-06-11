@@ -18,6 +18,7 @@ package org.apache.rocketmq.store.index;
 
 import org.apache.rocketmq.common.UtilAll;
 import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.common.message.MessageClientIDSetter;
 import org.apache.rocketmq.common.message.MessageConst;
 import org.apache.rocketmq.common.sysflag.MessageSysFlag;
 import org.apache.rocketmq.logging.InternalLogger;
@@ -66,16 +67,22 @@ public class IndexService {
      */
     private static final int MAX_TRY_IDX_CREATE = 3;
     private final DefaultMessageStore defaultMessageStore;
+    // hash槽数量，默认是500w
     private final int hashSlotNum;
+    // index条数个数，默认是2000w
     private final int indexNum;
+    // index存储路径 ${ROCKET_HOME}/store/index
     private final String storePath;
     private final ArrayList<IndexFile> indexFileList = new ArrayList<IndexFile>();
     private final ReadWriteLock readWriteLock = new ReentrantReadWriteLock();
 
     public IndexService(final DefaultMessageStore store) {
         this.defaultMessageStore = store;
+        // 500w
         this.hashSlotNum = store.getMessageStoreConfig().getMaxHashSlotNum();
+        // 2000w
         this.indexNum = store.getMessageStoreConfig().getMaxIndexNum();
+        // ${ROCKET_HOME}/store/index
         this.storePath =
             StorePathConfigHelper.getStorePathIndex(store.getMessageStoreConfig().getStorePathRootDir());
     }
@@ -261,7 +268,7 @@ public class IndexService {
             DispatchRequest msg = req;
             String topic = msg.getTopic();
             String keys = msg.getKeys();
-            // 新来消息是之前的，不应该出现
+            // 新来消息是之前的，不应该出现，忽略
             if (msg.getCommitLogOffset() < endPhyOffset) {
                 return;
             }
@@ -286,8 +293,18 @@ public class IndexService {
                 }
             }
 
-            // 多个msg，循环逐个存入
+            // 将消息中的keys、uniq_keys写入index文件
             if (keys != null && keys.length() > 0) {
+                /**
+                 * keys
+                 * {@link org.apache.rocketmq.common.message.Message#Message(String, String, String, byte[])}
+                 * org.apache.rocketmq.common.message.Message.Message(java.lang.String, java.lang.String, java.lang.String, int, byte[], boolean)
+                 * 用户在发送消息的时候可以指定多个key，多个key使用空格分隔{@link MessageConst#KEY_SEPARATOR}
+                 *
+                 * UniqKey:
+                 *    消息唯一键，与消息Id不一样，因为消息ID在commitLog文件中并不是唯一的，消息消费重试时，发送的消息的消息id与原先的一样（？？？待确认）
+                 *    具体算法：{@link MessageClientIDSetter#createUniqID()}
+                 */
                 String[] keyset = keys.split(MessageConst.KEY_SEPARATOR);
                 for (int i = 0; i < keyset.length; i++) {
                     String key = keyset[i];

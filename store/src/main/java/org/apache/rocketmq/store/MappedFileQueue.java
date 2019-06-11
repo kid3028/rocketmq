@@ -98,6 +98,13 @@ public class MappedFileQueue {
         return mfs;
     }
 
+    /**
+     * 截断无效的consumequeue
+     * 再次遍历所有MappedFile，如果offset大于该consumequeue，则无需处理，设置wrotePosition、commitedPosition、flushedPostion的值即可
+     * 如果offset小于该文件最大的offset，则该文件整个删除
+     *
+     * @param offset
+     */
     public void truncateDirtyFiles(long offset) {
         List<MappedFile> willRemoveFiles = new ArrayList<MappedFile>();
 
@@ -259,6 +266,7 @@ public class MappedFileQueue {
     public MappedFile getLastMappedFile() {
         MappedFile mappedFileLast = null;
 
+        // mappedFiles不空，找到最后一个
         while (!this.mappedFiles.isEmpty()) {
             try {
                 mappedFileLast = this.mappedFiles.get(this.mappedFiles.size() - 1);
@@ -480,6 +488,7 @@ public class MappedFileQueue {
     }
 
     /**
+     * 根据offset查找MappedFile
      * Finds a mapped file by offset.
      *
      * @param offset Offset.
@@ -530,11 +539,17 @@ public class MappedFileQueue {
         return null;
     }
 
+    /**
+     * 获取到第一个MappedFile
+     * @return
+     */
     public MappedFile getFirstMappedFile() {
         MappedFile mappedFileFirst = null;
 
+        // mappedFiles不为空
         if (!this.mappedFiles.isEmpty()) {
             try {
+                // 拿到第一个
                 mappedFileFirst = this.mappedFiles.get(0);
             } catch (IndexOutOfBoundsException e) {
                 //ignore

@@ -174,7 +174,9 @@ public class DefaultMessageStore implements MessageStore {
         this.indexService.start();
 
         this.dispatcherList = new LinkedList<>();
+        // 构建consumequeuue
         this.dispatcherList.addLast(new CommitLogDispatcherBuildConsumeQueue());
+        // 构建index
         this.dispatcherList.addLast(new CommitLogDispatcherBuildIndex());
 
         File file = new File(StorePathConfigHelper.getLockFile(messageStoreConfig.getStorePathRootDir()));
@@ -193,6 +195,17 @@ public class DefaultMessageStore implements MessageStore {
     }
 
     /**
+     * 加载相关文件，执行恢复
+     * 1.首先加载相关文件到内存(内存映射文件)
+     *     包括CommitLog文件、ConsumeQueue文件，存储检测点(checkpoint文件)文件、索引文件
+     * 2.执行文件恢复
+     * 引入临时文件abort来区分是否是异常启动。在存储管理启动时创建abort文件，结束(shutdown)时会删除abort文件，
+     * 也就是如果在启动的时候，发送有该临时文件，则认为上次是异常关闭。
+     * 3.恢复顺序
+     *   3.1.先恢复consumequeue文件，把不符合的consumqueue文件删除，一个consume条目正确的标准是(commitLog offset > 0, size > 0),从倒数第三个文件开始恢复
+     *   3.2.如果abort文件存在，此时找到第一个正常的commitLog文件，然后对该文件重新进行转发，依次更新consumequeue，index文件
+     *
+     *
      * @throws IOException
      */
     public boolean load() {
@@ -229,7 +242,7 @@ public class DefaultMessageStore implements MessageStore {
                     new StoreCheckpoint(StorePathConfigHelper.getStoreCheckpoint(this.messageStoreConfig.getStorePathRootDir()));
                 // 加载~/store/index目录下的索引文件
                 this.indexService.load(lastExitOK);
-                // 恢复动作
+                // 文件检测恢复
                 this.recover(lastExitOK);
 
                 log.info("load over, and the max phy offset = {}", this.getMaxPhyOffset());
@@ -1172,6 +1185,12 @@ public class DefaultMessageStore implements MessageStore {
         return null;
     }
 
+    /**
+     * 根据topic 和 queueId查找ConsumeQueue
+     * @param topic
+     * @param queueId
+     * @return
+     */
     public ConsumeQueue findConsumeQueue(String topic, int queueId) {
         ConcurrentMap<Integer, ConsumeQueue> map = consumeQueueTable.get(topic);
         if (null == map) {
@@ -1397,8 +1416,10 @@ public class DefaultMessageStore implements MessageStore {
 
         // 根据上次进程退出的结果判断采取正常/异常commitlog恢复，对应~/store/commitlog目录下的内容
         if (lastExitOK) {
+            // 正常退出，按照正常恢复
             this.commitLog.recoverNormally();
         } else {
+            // 异常退出，按照异常修复逻辑恢复
             this.commitLog.recoverAbnormally();
         }
         // 恢复topic队列
@@ -1432,6 +1453,7 @@ public class DefaultMessageStore implements MessageStore {
 
     /**
      * 恢复消费队列
+     * 主要任务是将非法offset的mappedFile踢出
      */
     private void recoverConsumeQueue() {
         for (ConcurrentMap<Integer, ConsumeQueue> maps : this.consumeQueueTable.values()) {
@@ -1487,6 +1509,10 @@ public class DefaultMessageStore implements MessageStore {
         return runningFlags;
     }
 
+    /**
+     * 转发
+     * @param req
+     */
     public void doDispatch(DispatchRequest req) {
         for (CommitLogDispatcher dispatcher : this.dispatcherList) {
             dispatcher.dispatch(req);
@@ -1540,6 +1566,11 @@ public class DefaultMessageStore implements MessageStore {
      */
     class CommitLogDispatcherBuildConsumeQueue implements CommitLogDispatcher {
 
+        /**
+         * broker在构造ConsumeQueue的时候会判断是否是prepare或者rollback消息，如果是这两种中的一种则不会将该消息放入ConsumeQueue，
+         * consumer在拉取消息的时候也就不会拉取到prepare和rollback的消息
+         * @param request
+         */
         @Override
         public void dispatch(DispatchRequest request) {
             final int tranType = MessageSysFlag.getTransactionValue(request.getSysFlag());
@@ -1841,9 +1872,11 @@ public class DefaultMessageStore implements MessageStore {
 
     /**
      * 单线程任务
+     * 根据commitLog offset将commitLog转发给ConsumeQueue、index
      */
     class ReputMessageService extends ServiceThread {
 
+        // 从commitLog开始拉取的初始偏移量
         private volatile long reputFromOffset = 0;
 
         public long getReputFromOffset() {
@@ -1969,7 +2002,7 @@ public class DefaultMessageStore implements MessageStore {
 
             while (!this.isStopped()) {
                 try {
-                    // 每隔1ms执行一次doReput，实时将消息转发给消息消费队里与索引文件，更新dispatcherPosition，并向服务端即使反馈当前已存储进度
+                    // 每隔1ms执行一次doReput，其实就是实时将消息转发给消息消费队里与索引文件，更新dispatcherPosition，并向服务端即使反馈当前已存储进度
                     Thread.sleep(1);
                     this.doReput();
                 } catch (Exception e) {

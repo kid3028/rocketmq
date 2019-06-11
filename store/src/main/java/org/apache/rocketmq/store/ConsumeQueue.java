@@ -31,10 +31,31 @@ import java.util.List;
  * 底层存储与commitLog一样使用MappedFile，每个CQUnit的大小是固定的，存储了消息的offset、消息的size和tagcode。
  * 存储tag是为了在consumer取到消息offset后，先根据tag做一次过滤。剩下的才需要到commitLog中去消息详情。
  * MessageStore通过ReputMessageService将消息的offset写到ConsumeQueue中。
+ *
+ * RocketMQ的存储机制是所有的主题消息都存储在CommitLog文件中，也就是消息发送时完全的顺序IO操作，加上利用内存文件映射机制，极大的提高了IO性能。
+ * 消息的全量信息存放在commitLog文件中，并且每条消息的长度是不一样的。
+ * 如果消费者直接基于commitLog进行消费的话，简直就是是一个噩梦，因为不同的主题的消息完全顺序的存在commitLog文件中，根据主题去查询消息，
+ * 不得不遍历整个commitLog文件，显然作为一款消息中间件这是绝对不可以的。
+ * RocketMQ的ConsumeQueue文件就是来解决消息消费的。首先，一个主题，在broker上可以分为多个消费队列，默认是4个，也就是消费队列是基于主题+broker。
+ * 那ConsumeQueue中当然不会在存储全量消息了，而是存储定长(20byte = 8byte commitLog offset + 4byte size + 8byte tagsCode)，。
+ * 消息消费时，首先根据commitLog offset去commitLog文件组中，找到消息的起始位置(（offset / 1G + 1） 第几个MappedFile， offset - startOffset 相对偏移量)，
+ * 然后根据消息长度，读取整条消息。
+ *
+ * 如果我们需要根据消息ID，来查找消息，ConsumeQueue中没有存储消息Id，如果不采取其他措施，又需要遍历commitLog文件了，为了解决这个问题，RocketMQ采用了Index文件。
+ *
+ * 存储路径${ROCKET_HOME}//store/consumequeue/{topic}/{queueId}，默认大小为600w byte，每条记录20byte，也就是可以存储30w条记录
+ * (20byte = 8byte commitLog offset + 4byte size + 8byte tagsCode)
+ * +-------------+------------+----------------+
+ * | 8byte offset| 4byte size | 8byte tagsCode |
+ * +-------------+------------+----------------+
+ * filename 00_000_000_000_006_000_000
+ * fileFromOffset 6_000_000
+ *
  */
 public class ConsumeQueue {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
+    //一个CQUnit占用20byte
     public static final int CQ_STORE_UNIT_SIZE = 20;
     private static final InternalLogger LOG_ERROR = InternalLoggerFactory.getLogger(LoggerName.STORE_ERROR_LOGGER_NAME);
 
@@ -97,23 +118,33 @@ public class ConsumeQueue {
         final List<MappedFile> mappedFiles = this.mappedFileQueue.getMappedFiles();
         if (!mappedFiles.isEmpty()) {
 
-            // -3 ???
+            // -3 ??? 从倒数第三个文件开始读取，这应该是一个经验值
             int index = mappedFiles.size() - 3;
             if (index < 0)
                 index = 0;
 
+            // consumequeue的逻辑大小
             int mappedFileSizeLogics = this.mappedFileSize;
+            // 该Queue在index下对应的内存映射文件
             MappedFile mappedFile = mappedFiles.get(index);
+            // 内存映射文件对应的ByteBuffer
             ByteBuffer byteBuffer = mappedFile.sliceByteBuffer();
+            // 处理的offset，默认从consumequeue中存放的一个条目开始
             long processOffset = mappedFile.getFileFromOffset();
             long mappedFileOffset = 0;
             long maxExtAddr = 1;
+            //
             while (true) {
+                // 循环检验consumequeue包含条目的有效性(如果offset大于0，并且size大于0，则表示时一个有效的条目)
                 for (int i = 0; i < mappedFileSizeLogics; i += CQ_STORE_UNIT_SIZE) {
-                    long offset = byteBuffer.getLong();
-                    int size = byteBuffer.getInt();
-                    long tagsCode = byteBuffer.getLong();
+                    long offset = byteBuffer.getLong(); // offset
+                    int size = byteBuffer.getInt(); // size
+                    long tagsCode = byteBuffer.getLong(); // tagsCode
 
+                    /**
+                     * 如果offset大于0并且size大于0，则表示是一个有效的条目，设置ConsumeQueue中有效的mappedFileOffset，
+                     * 继续下一个条目的验证，如果发送不正常的条目，则跳出循环
+                     */
                     if (offset >= 0 && size > 0) {
                         mappedFileOffset = i + CQ_STORE_UNIT_SIZE;
                         this.maxPhysicOffset = offset;
@@ -127,8 +158,10 @@ public class ConsumeQueue {
                     }
                 }
 
+                // 当前MappedFile全部条目都校验通过，index++，继续校验下一个文件
                 if (mappedFileOffset == mappedFileSizeLogics) {
                     index++;
+                    // 校验最后三个文件完成， 退出
                     if (index >= mappedFiles.size()) {
 
                         log.info("recover last consume queue file over, last mapped file "
@@ -148,11 +181,15 @@ public class ConsumeQueue {
                 }
             }
 
+            // 代表当前consumequeue有效的偏移量
             processOffset += mappedFileOffset;
+            // 设置刷新位置、提交位置
             this.mappedFileQueue.setFlushedWhere(processOffset);
             this.mappedFileQueue.setCommittedWhere(processOffset);
+            // 截断无效的consumequeue文件
             this.mappedFileQueue.truncateDirtyFiles(processOffset);
 
+            // 如果使用了扩展文件，对扩展文件进行检查
             if (isExtReadEnable()) {
                 this.consumeQueueExt.recover();
                 log.info("Truncate consume queue extend file by max {}", maxExtAddr);
@@ -386,7 +423,7 @@ public class ConsumeQueue {
     }
 
     /**
-     * 调用put方法
+     * 调用put方法,将消息写入ConsumeQueue
      * @param request
      */
     public void putMessagePositionInfoWrapper(DispatchRequest request) {
@@ -400,7 +437,7 @@ public class ConsumeQueue {
                 /**
                  * 如果需要些ext文件，则将消息的tagsCode写入
                  * 将tagsCode和bitMap记录进CQExt文件中，这是一个过滤的扩展功能，采用的bloom过滤器先记录消息的bitMap，
-                 * 这样consumer来读取消息时小铜锅bloom过滤器判断是否有符合过滤条件的消息
+                 * 这样consumer来读取消息时可以通过bloom过滤器判断是否有符合过滤条件的消息
                   */
                 ConsumeQueueExt.CqExtUnit cqExtUnit = new ConsumeQueueExt.CqExtUnit();
                 cqExtUnit.setFilterBitMap(request.getBitMap());
@@ -444,10 +481,14 @@ public class ConsumeQueue {
      * 将消息offset写入cq文件
      * 写文件的逻辑和写CommitLog的逻辑是一样的，首先封装一个CQUtil，这里面offset占8个字节，消息size占用4个字节，tagcode占8个字节。
      * 然后找到最后一个MappedFile，对于新建的文件，会有一个预热的动作，先将所有CQUnit初始化为0值，最后将Unit写入到文件中
-     * @param offset
-     * @param size
-     * @param tagsCode
-     * @param cqOffset
+     * CQUnit
+     * +-------------+------------+----------------+
+     * | 8byte offset| 4byte size | 8byte tagsCode |
+     * +-------------+------------+----------------+
+     * @param offset commitLog offset 8byte
+     * @param size 消息体大小 4byte
+     * @param tagsCode 消息tags的hashcode
+     * @param cqOffset 写入consumequeue的offset
      * @return
      */
     private boolean putMessagePositionInfo(final long offset, final int size, final long tagsCode,
@@ -464,12 +505,13 @@ public class ConsumeQueue {
         this.byteBufferIndex.putInt(size);
         this.byteBufferIndex.putLong(tagsCode);
 
+        // 计算预计插入ConsumeQueue的consumequeue文件位置
         final long expectLogicOffset = cqOffset * CQ_STORE_UNIT_SIZE;
 
         // 获取最后一个MappedFile
         MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile(expectLogicOffset);
         if (mappedFile != null) {
-            // 对新创建的文件，先将所有CQUnit初始化0值
+            // 对新创建的文件，先将所有CQUnit初始化0值,填充空格
             if (mappedFile.isFirstCreateInQueue() && cqOffset != 0 && mappedFile.getWrotePosition() == 0) {
                 this.minLogicOffset = expectLogicOffset;
                 this.mappedFileQueue.setFlushedWhere(expectLogicOffset);
@@ -500,7 +542,7 @@ public class ConsumeQueue {
                 }
             }
             this.maxPhysicOffset = offset;
-            // CQUnit写入文件中
+            // CQUnit写入ConsumeQueue文件中，整个过程都是基于MappedFile来操作的
             return mappedFile.appendMessage(this.byteBufferIndex.array());
         }
         return false;
@@ -520,8 +562,10 @@ public class ConsumeQueue {
 
     public SelectMappedBufferResult getIndexBuffer(final long startIndex) {
         int mappedFileSize = this.mappedFileSize;
+        // 计算offset
         long offset = startIndex * CQ_STORE_UNIT_SIZE;
         if (offset >= this.getMinLogicOffset()) {
+            // 根据offset找到MappedFile
             MappedFile mappedFile = this.mappedFileQueue.findMappedFileByOffset(offset);
             if (mappedFile != null) {
                 SelectMappedBufferResult result = mappedFile.selectMappedBuffer((int) (offset % mappedFileSize));
