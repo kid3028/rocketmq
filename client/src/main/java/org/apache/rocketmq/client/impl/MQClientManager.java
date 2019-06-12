@@ -53,6 +53,7 @@ public class MQClientManager {
      * @return
      */
     public MQClientInstance getAndCreateMQClientInstance(final ClientConfig clientConfig, RPCHook rpcHook) {
+        // IP@instanceName  IP@intanceName@unitName
         String clientId = clientConfig.buildMQClientId();
         MQClientInstance instance = this.factoryTable.get(clientId);
         if (null == instance) {

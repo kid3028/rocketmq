@@ -120,20 +120,32 @@ public class ProcessQueue {
         }
     }
 
+    /**
+     * 将消息放入消费队列，ProcessQueue的msgTreeMap
+     * @param msgs
+     * @return
+     */
     public boolean putMessage(final List<MessageExt> msgs) {
         boolean dispatchToConsume = false;
         try {
             this.lockTreeMap.writeLock().lockInterruptibly();
             try {
+                // 记录本次拉取数据中有效的数据有多少
                 int validMsgCnt = 0;
                 for (MessageExt msg : msgs) {
+                    // 将消息装入msgTreeMap
                     MessageExt old = msgTreeMap.put(msg.getQueueOffset(), msg);
+                    // 如果msg的offset在msgTreeMap中没有对应的消息，那么说明该消息是第一次拉取
                     if (null == old) {
+                        // 本次有效数据+1
                         validMsgCnt++;
+                        // 更新processQueue的最大offset
                         this.queueOffsetMax = msg.getQueueOffset();
+                        // 更新总的消息大小
                         msgSize.addAndGet(msg.getBody().length);
                     }
                 }
+                // 更新总的有效消息数量
                 msgCount.addAndGet(validMsgCnt);
 
                 if (!msgTreeMap.isEmpty() && !this.consuming) {
@@ -143,6 +155,7 @@ public class ProcessQueue {
 
                 if (!msgs.isEmpty()) {
                     MessageExt messageExt = msgs.get(msgs.size() - 1);
+                    // 获取最后一条消息的offset
                     String property = messageExt.getProperty(MessageConst.PROPERTY_MAX_OFFSET);
                     if (property != null) {
                         long accTotal = Long.parseLong(property) - messageExt.getQueueOffset();
@@ -161,6 +174,10 @@ public class ProcessQueue {
         return dispatchToConsume;
     }
 
+    /**
+     * 获取最大跨度 最后一个-第一个
+     * @return
+     */
     public long getMaxSpan() {
         try {
             this.lockTreeMap.readLock().lockInterruptibly();
@@ -178,6 +195,12 @@ public class ProcessQueue {
         return 0;
     }
 
+    /**
+     * 清除消息
+     *  清空msgTreeMap
+     * @param msgs
+     * @return
+     */
     public long removeMessage(final List<MessageExt> msgs) {
         long result = -1;
         final long now = System.currentTimeMillis();
@@ -257,7 +280,9 @@ public class ProcessQueue {
      * 消费成功
      *  1.清空临时的map
      *  2.记录当前消费的offset
-     * @return
+     * org.apache.rocketmq.client.impl.consumer.ConsumeMessageOrderlyService#processConsumeResult(java.util.List, org.apache.rocketmq.client.consumer.listener.ConsumeOrderlyStatus, org.apache.rocketmq.client.consumer.listener.ConsumeOrderlyContext, org.apache.rocketmq.client.impl.consumer.ConsumeMessageOrderlyService.ConsumeRequest)
+     * 当消费成功之后会回调该方法
+     * * @return
      */
     public long commit() {
         try {

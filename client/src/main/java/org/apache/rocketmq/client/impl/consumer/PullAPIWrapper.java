@@ -64,16 +64,25 @@ public class PullAPIWrapper {
         this.unitMode = unitMode;
     }
 
+    /**
+     * 处理消息拉取结果
+     * @param mq
+     * @param pullResult
+     * @param subscriptionData
+     * @return
+     */
     public PullResult processPullResult(final MessageQueue mq, final PullResult pullResult,
         final SubscriptionData subscriptionData) {
         PullResultExt pullResultExt = (PullResultExt) pullResult;
 
+        // 更新broker建议
         this.updatePullFromWhichNode(mq, pullResultExt.getSuggestWhichBrokerId());
         if (PullStatus.FOUND == pullResult.getPullStatus()) {
             ByteBuffer byteBuffer = ByteBuffer.wrap(pullResultExt.getMessageBinary());
             List<MessageExt> msgList = MessageDecoder.decodes(byteBuffer);
 
             List<MessageExt> msgListFilterAgain = msgList;
+            // 执行过滤
             if (!subscriptionData.getTagsSet().isEmpty() && !subscriptionData.isClassFilterMode()) {
                 msgListFilterAgain = new ArrayList<MessageExt>(msgList.size());
                 for (MessageExt msg : msgList) {
@@ -85,6 +94,7 @@ public class PullAPIWrapper {
                 }
             }
 
+            // 过滤钩子
             if (this.hasHook()) {
                 FilterMessageContext filterMessageContext = new FilterMessageContext();
                 filterMessageContext.setUnitMode(unitMode);
@@ -111,7 +121,13 @@ public class PullAPIWrapper {
         return pullResult;
     }
 
+    /**
+     * 更新broker返回的建议下一次拉取消息的broker
+     * @param mq
+     * @param brokerId
+     */
     public void updatePullFromWhichNode(final MessageQueue mq, final long brokerId) {
+        // Map<MessageQueue, brokerId>
         AtomicLong suggest = this.pullFromWhichNodeTable.get(mq);
         if (null == suggest) {
             this.pullFromWhichNodeTable.put(mq, new AtomicLong(brokerId));
@@ -140,18 +156,18 @@ public class PullAPIWrapper {
      * broker实现冗余之后，就有多个消息副本了，那么consumer怎么知道究竟是从master读取消息还是从slave读取消息？？？
      * consumer通过负载均衡算法计算出本次消息从哪一个MessageQueue消息，但是MessageQueue只是决定了从哪一个broker set下
      * 的哪一个queue消费消息，并不能确定具体的broker，但是在发送pull请求的时候会确定具体的broker
-     * @param mq
-     * @param subExpression
+     * @param mq 消息消费队列
+     * @param subExpression  消息订阅子模式
      * @param expressionType
-     * @param subVersion
-     * @param offset
+     * @param subVersion  版本
+     * @param offset // pullRequest.getNextOffset
      * @param maxNums
-     * @param sysFlag
-     * @param commitOffset
-     * @param brokerSuspendMaxTimeMillis
-     * @param timeoutMillis
-     * @param communicationMode
-     * @param pullCallback
+     * @param sysFlag 系统标识
+     * @param commitOffset 当前消息队列commitLog日志中当前的最新偏移量
+     * @param brokerSuspendMaxTimeMillis 允许broker暂停的时间，毫秒为单位，默认12是、
+     * @param timeoutMillis 超时时间，默认时30s
+     * @param communicationMode SYNC ASYNC ONEWAY
+     * @param pullCallback pull回调
      * @return
      * @throws MQClientException
      * @throws RemotingException
@@ -172,10 +188,13 @@ public class PullAPIWrapper {
         final CommunicationMode communicationMode,
         final PullCallback pullCallback
     ) throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
+        // 根据MQ的broker信息获取查找Broker信息 brokerAddress/ slave/ version
         FindBrokerResult findBrokerResult =
             this.mQClientFactory.findBrokerAddressInSubscribe(mq.getBrokerName(),
                 this.recalculatePullFromWhichNode(mq), false);
+        // 没有找到
         if (null == findBrokerResult) {
+            // 从nameserver拉取新数据，再查找一次
             this.mQClientFactory.updateTopicRouteInfoFromNameServer(mq.getTopic());
             findBrokerResult =
                 this.mQClientFactory.findBrokerAddressInSubscribe(mq.getBrokerName(),
@@ -184,7 +203,7 @@ public class PullAPIWrapper {
 
         if (findBrokerResult != null) {
             {
-                // check version
+                // check version 4.1.0_SNAPSHOT版本以下只支持tag订阅
                 if (!ExpressionType.isTagType(expressionType)
                     && findBrokerResult.getBrokerVersion() < MQVersion.Version.V4_1_0_SNAPSHOT.ordinal()) {
                     throw new MQClientException("The broker[" + mq.getBrokerName() + ", "
@@ -193,10 +212,12 @@ public class PullAPIWrapper {
             }
             int sysFlagInner = sysFlag;
 
+            // 找到的是Slave
             if (findBrokerResult.isSlave()) {
                 sysFlagInner = PullSysFlag.clearCommitOffsetFlag(sysFlagInner);
             }
 
+            // 构建消息拉取请求头
             PullMessageRequestHeader requestHeader = new PullMessageRequestHeader();
             requestHeader.setConsumerGroup(this.consumerGroup);
             requestHeader.setTopic(mq.getTopic());
@@ -212,9 +233,11 @@ public class PullAPIWrapper {
 
             String brokerAddr = findBrokerResult.getBrokerAddr();
             if (PullSysFlag.hasClassFilterFlag(sysFlagInner)) {
+                // 根据brokerAddress和topic确定消息过滤服务器
                 brokerAddr = computPullFromWhichFilterServer(mq.getTopic(), brokerAddr);
             }
 
+            // 拉取结果
             PullResult pullResult = this.mQClientFactory.getMQClientAPIImpl().pullMessage(
                 brokerAddr,
                 requestHeader,
@@ -225,6 +248,7 @@ public class PullAPIWrapper {
             return pullResult;
         }
 
+        // 没有该topic对应的broker信息
         throw new MQClientException("The broker[" + mq.getBrokerName() + "] not exist", null);
     }
 
@@ -276,6 +300,13 @@ public class PullAPIWrapper {
         return MixAll.MASTER_ID;
     }
 
+    /**
+     * 根据brokerAddress和topic确定消息过滤服务器
+     * @param topic
+     * @param brokerAddr
+     * @return
+     * @throws MQClientException
+     */
     private String computPullFromWhichFilterServer(final String topic, final String brokerAddr)
         throws MQClientException {
         ConcurrentMap<String, TopicRouteData> topicRouteTable = this.mQClientFactory.getTopicRouteTable();

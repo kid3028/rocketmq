@@ -24,8 +24,12 @@ import org.apache.rocketmq.logging.InternalLogger;
 
 import java.util.concurrent.*;
 
+/**
+ * 从LinkedBlockingQueue中循环取出PullRequest对象，然后执行pullMessage
+ */
 public class PullMessageService extends ServiceThread {
     private final InternalLogger log = ClientLogger.getLog();
+    // 向pullRequestQueue中放入PullRequestHoldService的是RebalanceService#run方法
     private final LinkedBlockingQueue<PullRequest> pullRequestQueue = new LinkedBlockingQueue<PullRequest>();
     private final MQClientInstance mQClientFactory;
     private final ScheduledExecutorService scheduledExecutorService = Executors

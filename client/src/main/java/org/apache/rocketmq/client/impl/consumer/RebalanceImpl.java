@@ -35,6 +35,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
+ * 消费负载均衡
+ *   注意：消费队列与消费者关系：1个消费者可以消费多个队列，但1个消息队列只会被一个消费者消费，
+ *   如果消费者数量大于消息队列数量，则有的消费者会消费不到消息(集群模式)
+ *
  * Base class for rebalance algorithm
  */
 public abstract class RebalanceImpl {
@@ -42,6 +46,7 @@ public abstract class RebalanceImpl {
     protected final ConcurrentMap<MessageQueue, ProcessQueue> processQueueTable = new ConcurrentHashMap<MessageQueue, ProcessQueue>(64);
     protected final ConcurrentMap<String/* topic */, Set<MessageQueue>> topicSubscribeInfoTable =
         new ConcurrentHashMap<String, Set<MessageQueue>>();
+    // topic订阅规则 尽管存在多个规则，同一个topic下只会保留一个规则
     protected final ConcurrentMap<String /* topic */, SubscriptionData> subscriptionInner =
         new ConcurrentHashMap<String, SubscriptionData>();
     protected String consumerGroup;
@@ -212,6 +217,8 @@ public abstract class RebalanceImpl {
 
     /**
      * Rebalance触发pull消息
+     *  1.根据topic进行负载均衡
+     *  2.移除MessageQueue，如果MessageQueue的topic不在订阅的主题中，
      * @param isOrder
      */
     public void doRebalance(final boolean isOrder) {
@@ -221,7 +228,7 @@ public abstract class RebalanceImpl {
             for (final Map.Entry<String, SubscriptionData> entry : subTable.entrySet()) {
                 final String topic = entry.getKey();
                 try {
-                    // 循环针对所有订阅的topic，做rebalance
+                    // 根据topic进行负载均衡，循环针对所有订阅的topic，做rebalance
                     this.rebalanceByTopic(topic, isOrder);
                 } catch (Throwable e) {
                     if (!topic.startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
@@ -239,6 +246,11 @@ public abstract class RebalanceImpl {
     }
 
 
+    /**
+     * 根据topic进行负载均衡
+     * @param topic
+     * @param isOrder
+     */
     private void rebalanceByTopic(final String topic, final boolean isOrder) {
         switch (messageModel) {
             case BROADCASTING: {
@@ -261,8 +273,10 @@ public abstract class RebalanceImpl {
             case CLUSTERING: {
                 // 1.从路由信息中获取topic对应所有的queue
                 Set<MessageQueue> mqSet = this.topicSubscribeInfoTable.get(topic);
-                // 从broker获取所有同一个group的所有consumer id
+                // 从broker获取所有同一个group的所有consumer id，该消费组的消费者id列表
                 List<String> cidAll = this.mQClientFactory.findConsumerIdList(topic, consumerGroup);
+
+                // 消息消费队列、主题与该消费组的消费者id列表，任意一个为空，则退出该方法的执行
                 if (null == mqSet) {
                     if (!topic.startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
                         log.warn("doRebalance, {}, but the topic[{}] not exist.", consumerGroup, topic);
@@ -359,6 +373,12 @@ public abstract class RebalanceImpl {
         boolean changed = false;
 
         Iterator<Entry<MessageQueue, ProcessQueue>> it = this.processQueueTable.entrySet().iterator();
+        /**
+         * 遍历消息队列-处理队列缓存，只处理mq的主题与该主题相关的ProcessQueue，如果mq不在当前主题的处理范围内
+         * （由于消息队列数量变化等原因，消费者的消费队列发生了变化，该队列已经分配给了别的消费者去消费了），
+         * 首先设置该消息队列为丢弃(dropped为volatile修饰)，可以及时的阻止继续向ProcessQueue中拉数据，
+         * 然后执行removeUnnecessaryMessageQueue(mq,pq)来判断是否需要移除
+         */
         while (it.hasNext()) {
             Entry<MessageQueue, ProcessQueue> next = it.next();
             MessageQueue mq = next.getKey();
@@ -407,7 +427,7 @@ public abstract class RebalanceImpl {
                 // 从offset store中移除过时的数据
                 this.removeDirtyOffset(mq);
                 ProcessQueue pq = new ProcessQueue();
-                // 获取开始消费的offset
+                // 重新计算offset
                 long nextOffset = this.computePullFromWhere(mq);
                 if (nextOffset >= 0) {
                     // 为新的queue初始化一个processorQueue，用来缓存收到的消息

@@ -33,6 +33,14 @@ public class AllocateMessageQueueAveragely implements AllocateMessageQueueStrate
     private final InternalLogger log = ClientLogger.getLog();
 
 
+    /**
+     * 平均分配
+     * @param consumerGroup current consumer group
+     * @param currentCID current consumer id
+     * @param mqAll message queue set in current topic
+     * @param cidAll consumer set in current consumer group
+     * @return
+     */
     @Override
     public List<MessageQueue> allocate(String consumerGroup, String currentCID, List<MessageQueue> mqAll,
         List<String> cidAll) {

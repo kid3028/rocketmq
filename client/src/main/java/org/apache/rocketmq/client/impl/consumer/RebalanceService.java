@@ -21,6 +21,14 @@ import org.apache.rocketmq.client.log.ClientLogger;
 import org.apache.rocketmq.common.ServiceThread;
 import org.apache.rocketmq.logging.InternalLogger;
 
+/**
+ * 消息负载均衡机制服务
+ *   首先RebalanceService线程启动，为消费者分配消息队列，其实每一个MessageQueue会构建一个PullRequest对象，
+ *   然后通过RebalanceImpl将PullRequest放入到PullMessageService线程的LinkedBlockingQueue，进而唤醒
+ *   queue.take()方法，然后执行DefaultMQPushConsumerImpl的pullMessage，通过网络从broker端拉消息，一次
+ *   最多拉取的消息条数可配置，默认1条，然后将拉取的消息，执行过滤等，然后封装成一个任务ConsumeRequest,提交到
+ *   消费者的线程池去执行，每次消费消息后，又将该pullRequest放入到PullMessageService中
+ */
 public class RebalanceService extends ServiceThread {
     private static long waitInterval =
         Long.parseLong(System.getProperty(

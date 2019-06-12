@@ -16,8 +16,9 @@
  */
 package org.apache.rocketmq.common.filter;
 
-import java.net.URL;
 import org.apache.rocketmq.common.protocol.heartbeat.SubscriptionData;
+
+import java.net.URL;
 
 public class FilterAPI {
     public static URL classFile(final String className) {
@@ -42,16 +43,21 @@ public class FilterAPI {
         subscriptionData.setTopic(topic);
         subscriptionData.setSubString(subString);
 
+        // 如果订阅规则字符串为空，或者长度为0，或者时全部订阅，那么订阅规则为全部订阅
         if (null == subString || subString.equals(SubscriptionData.SUB_ALL) || subString.length() == 0) {
             subscriptionData.setSubString(SubscriptionData.SUB_ALL);
         } else {
+            // 按照 || 拆分订阅规则
             String[] tags = subString.split("\\|\\|");
             if (tags.length > 0) {
                 for (String tag : tags) {
                     if (tag.length() > 0) {
+                        // 截掉空格
                         String trimString = tag.trim();
                         if (trimString.length() > 0) {
+                            // 添加tag串
                             subscriptionData.getTagsSet().add(trimString);
+                            // 添加tag code
                             subscriptionData.getCodeSet().add(trimString.hashCode());
                         }
                     }

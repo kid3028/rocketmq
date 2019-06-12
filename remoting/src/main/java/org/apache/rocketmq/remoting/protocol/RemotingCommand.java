@@ -287,10 +287,17 @@ public class RemotingCommand {
         this.customHeader = customHeader;
     }
 
+    /**
+     * 解码头信息
+     * @param classHeader
+     * @return
+     * @throws RemotingCommandException
+     */
     public CommandCustomHeader decodeCommandCustomHeader(
         Class<? extends CommandCustomHeader> classHeader) throws RemotingCommandException {
         CommandCustomHeader objectHeader;
         try {
+            // 创建一个头信息实例
             objectHeader = classHeader.newInstance();
         } catch (InstantiationException e) {
             return null;
@@ -300,9 +307,12 @@ public class RemotingCommand {
 
         if (this.extFields != null) {
 
+            // 获取到该头信息对象的所有字段
             Field[] fields = getClazzFields(classHeader);
             for (Field field : fields) {
+                // 拿到非静态字段
                 if (!Modifier.isStatic(field.getModifiers())) {
+                    // 反射赋值
                     String fieldName = field.getName();
                     if (!fieldName.startsWith("this")) {
                         try {
@@ -332,6 +342,7 @@ public class RemotingCommand {
                                 throw new RemotingCommandException("the custom field <" + fieldName + "> type is not supported");
                             }
 
+                            // 反射赋值
                             field.set(objectHeader, valueParsed);
 
                         } catch (Throwable e) {
