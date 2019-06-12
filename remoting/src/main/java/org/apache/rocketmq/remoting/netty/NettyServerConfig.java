@@ -18,15 +18,39 @@ package org.apache.rocketmq.remoting.netty;
 
 public class NettyServerConfig implements Cloneable {
     private int listenPort = 8888;
+    /**
+     * 业务线程池的线程个数，RocketMQ按任务类型，每个任务类型都会拥有一个专门的线程池，
+     * 比如发送消息、消息消费、另外再加一个其他(默认的业务线程池)。
+     * 默认的业务线程池，采用Fixed类型，线程个数就是serverWorkerThreads
+     * 线程名称RemotingExecutorThread_
+     * 作用范围：该参数目前主要用于NameServer的默认业务线程池，
+     * 处理诸如broker、producer、consumer与NameServer的所有交互命令
+     */
     private int serverWorkerThreads = 8;
+    /**
+     * 回调业务线程池的线程个数，RocketMQ按任务类型，每个任务烈性会拥有一个专门的线程池，
+     * 比如发送消息，消息消费，另外再加一个其他(默认的业务线程池)
+     * 默认业务线程池，采用fixed类型，线程个数由serverCallbackExecutorThreads
+     * 线程名称：NettyServerPublicExecutor_
+     * 作用范围：broker，producer、consumer处理默认命令的业务线程池大小
+     */
     private int serverCallbackExecutorThreads = 0;
+    // 从Reactor线程数量
     private int serverSelectorThreads = 3;
+    /**
+     * 服务端oneway单向执行的信号量   异步调用的信号量
+     * 通常在客户端与broker的交互
+     */
     private int serverOnewaySemaphoreValue = 256;
     private int serverAsyncSemaphoreValue = 64;
+    // 通道空闲时间，默认120s，通过Netty的IdleStateHandler实现
     private int serverChannelMaxIdleTimeSeconds = 120;
 
+    // socket发送缓冲区大小
     private int serverSocketSndBufSize = NettySystemConfig.socketSndbufSize;
+    // socket接收缓冲区大小
     private int serverSocketRcvBufSize = NettySystemConfig.socketRcvbufSize;
+    // 是否使用PooledByteBuf
     private boolean serverPooledByteBufAllocatorEnable = true;
 
     /**

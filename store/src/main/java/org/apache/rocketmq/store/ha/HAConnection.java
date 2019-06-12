@@ -30,19 +30,25 @@ import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 
 /**
+ * Master-Slave网络连接对象
  * 每个slave都会对应一个HAConnection实例，用来与slave交互
  */
 public class HAConnection {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
+    // 关联的HAService实现类
     private final HAService haService;
+    // 网络通道
     private final SocketChannel socketChannel;
+    // 客户端地址
     private final String clientAddr;
     // 向slave推送消息
     private WriteSocketService writeSocketService;
     // 读取slave发回的同步消息
     private ReadSocketService readSocketService;
 
+    // 从服务器请求拉取数据的偏移量
     private volatile long slaveRequestOffset = -1;
+    // 从服务器反馈已拉取完成的数据偏移量
     private volatile long slaveAckOffset = -1;
 
     public HAConnection(final HAService haService, final SocketChannel socketChannel) throws IOException {
@@ -90,11 +96,16 @@ public class HAConnection {
      * 一个来自Slave的请求，也就是说么一个HAConnection保存一个slave的最大偏移量
      */
     class ReadSocketService extends ServiceThread {
+        // 默认缓冲区大小 1M
         private static final int READ_MAX_BUFFER_SIZE = 1024 * 1024;
+        // 事件选择器
         private final Selector selector;
+        // 网络通道
         private final SocketChannel socketChannel;
         private final ByteBuffer byteBufferRead = ByteBuffer.allocate(READ_MAX_BUFFER_SIZE);
+        // 当前已处理数据的指针
         private int processPostion = 0;
+        // 上次读取数据的时间戳
         private volatile long lastReadTimestamp = System.currentTimeMillis();
 
         /**
@@ -219,6 +230,7 @@ public class HAConnection {
                             HAConnection.this.haService.notifyTransferSome(HAConnection.this.slaveAckOffset);
                         }
                     } else if (readSize == 0) {
+                        // 如果连续3次读取到0字节，结束本次读请求处理
                         if (++readSizeZeroTimes >= 3) {
                             break;
                         }
@@ -240,18 +252,22 @@ public class HAConnection {
      * master前面接收到slave报告的最大偏移量之后，将会在这里将数据传送回slave
      */
     class WriteSocketService extends ServiceThread {
+        // 事件选择器
         private final Selector selector;
+        // 网络通道
         private final SocketChannel socketChannel;
 
+        // 消息头长度
         private final int headerSize = 8 + 4;
         private final ByteBuffer byteBufferHeader = ByteBuffer.allocate(headerSize);
-        // 记录着从commitLog哪个offset拉取消息
+        // 记录着从commitLog哪个offset拉取消息，即下一次传输的物理偏移量
         private long nextTransferFromWhere = -1;
-        // 拉取消息后的结果
+        // 拉取消息后的结果，根据偏移量查找消息的结果
         private SelectMappedBufferResult selectMappedBufferResult;
-        // 标记是否传输完成
+        // 标记上一次数据传输是否传输完成
         private boolean lastWriteOver = true;
 
+        // 上次写入时间戳
         private long lastWriteTimestamp = System.currentTimeMillis();
 
         /**
@@ -312,7 +328,11 @@ public class HAConnection {
                     }
                     // 传输完成。如果上一次transfer完成了才进行下一次transfer
                     if (this.lastWriteOver) {
-                        // 如果长时间没有发消息则尝试发送心跳
+                        /**
+                         * 如果已经全部写入，判断当前系统与上次最后写入的时间间隔是否大于HA心跳检测时间，
+                         * 大于则发送一个心跳包，心跳包的长度为12个字节(从服务器已经拉取到的偏移量 + size)，
+                         * 消息长度默认存0，表示本次数据包为心跳包，避免长连接由于空闲被关闭
+                         */
                         long interval =
                             HAConnection.this.haService.getDefaultMessageStore().getSystemClock().now() - this.lastWriteTimestamp;
                         if (interval > HAConnection.this.haService.getDefaultMessageStore().getMessageStoreConfig()
@@ -330,7 +350,11 @@ public class HAConnection {
                                 continue;
                         }
                     }
-                    // 继续传输
+                    /**
+                     * 继续传输
+                     * 如果上次数据传输未完成，则继续传输上次的数据，然后再次判断是否传输完成，如果消息还未全部传输完成，
+                     * 则结束此次事件处理，等待下次写事件到达后，继续将未传输完的数据先写入到从服务器
+                     */
                     else {
                         // 说明上一次的数据还没有传输完成，这里继续上一次的传输
                         this.lastWriteOver = this.transferData();
@@ -352,6 +376,10 @@ public class HAConnection {
                         // 计算下次需要给slave发送数据的起始位置
                         this.nextTransferFromWhere += size;
 
+                        /**
+                         * 如果找到的mappedFile大小超过了一次同步任务最大传输的字节数，则通过设置ByteBuffer的limit来
+                         * 设置只传输指定长度的字节，这也就意味着HA客户端收的消息包含了不完整的信息
+                         */
                         selectResult.getByteBuffer().limit(size);
                         this.selectMappedBufferResult = selectResult;
 

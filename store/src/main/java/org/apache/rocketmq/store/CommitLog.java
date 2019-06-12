@@ -1213,7 +1213,7 @@ public class CommitLog {
     }
 
     public static class GroupCommitRequest {
-        // 下一个点点的偏移量
+        // 下一个点的偏移量
         private final long nextOffset;
         private final CountDownLatch countDownLatch = new CountDownLatch(1);
         private volatile boolean flushOK = false;

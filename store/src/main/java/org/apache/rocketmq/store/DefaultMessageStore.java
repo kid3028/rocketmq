@@ -899,7 +899,7 @@ public class DefaultMessageStore implements MessageStore {
         }
         // 将具体的消息写入commitLog
         boolean result = this.commitLog.appendData(startOffset, data);
-        // 如果成功，唤醒ReputMessageService
+        // 如果成功，唤醒ReputMessageService，实时将消息转发到消息消费队列和索引文件
         if (result) {
             this.reputMessageService.wakeup();
         } else {
