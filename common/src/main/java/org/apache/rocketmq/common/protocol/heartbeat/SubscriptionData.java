@@ -29,13 +29,21 @@ import java.util.Set;
 public class SubscriptionData implements Comparable<SubscriptionData> {
     // 订阅topic下所有消息
     public final static String SUB_ALL = "*";
+    // 如果为true，表示使用上传过滤类来进行消息过滤，默认使用tag来进行消息过滤
     private boolean classFilterMode = false;
     // 订阅的topic
     private String topic;
-    // 订阅规则
+    /**
+     * 订阅规则
+     * 如果classFilterMode=true，则表示过滤类的全路径，
+     * 如果classFilterMode=false，表示订阅模式(tag或SQL92表示式)
+      */
     private String subString;
+    // 订阅的tag，因为消费者订阅时，可以使用"TAG1 || TAG2 || TAG3"
     private Set<String> tagsSet = new HashSet<String>();
+    // 订阅的tag的hashcode集合
     private Set<Integer> codeSet = new HashSet<Integer>();
+    // 版本
     private long subVersion = System.currentTimeMillis();
     // 订阅表达式，默认TAG
     private String expressionType = ExpressionType.TAG;

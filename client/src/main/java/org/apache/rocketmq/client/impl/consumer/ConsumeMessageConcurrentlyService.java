@@ -304,7 +304,7 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
                 int failed = consumeRequest.getMsgs().size() - ok;
                 // 消费成功的吞吐量
                 this.getConsumerStatsManager().incConsumeOKTPS(consumerGroup, consumeRequest.getMessageQueue().getTopic(), ok);
-                // 消费失败的吞吐两
+                // 消费失败的吞吐量
                 this.getConsumerStatsManager().incConsumeFailedTPS(consumerGroup, consumeRequest.getMessageQueue().getTopic(), failed);
                 break;
             case RECONSUME_LATER:

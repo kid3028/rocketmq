@@ -470,6 +470,10 @@ public abstract class RebalanceImpl {
 
     public abstract void dispatchPullRequest(final List<PullRequest> pullRequestList);
 
+    /**
+     * 移除mq对应的ProcessQueue
+     * @param mq
+     */
     public void removeProcessQueue(final MessageQueue mq) {
         ProcessQueue prev = this.processQueueTable.remove(mq);
         if (prev != null) {

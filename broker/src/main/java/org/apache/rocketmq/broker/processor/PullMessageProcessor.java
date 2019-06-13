@@ -180,10 +180,11 @@ public class PullMessageProcessor implements NettyRequestProcessor {
         // 有设置subscribe flag，表示第一次pull或者需要更新filter
         if (hasSubscriptionFlag) {
             try {
-                // 是否使用了表达式过滤
+                // 构建subscriptionData，TAG
                 subscriptionData = FilterAPI.build(
                         requestHeader.getTopic(), requestHeader.getSubscription(), requestHeader.getExpressionType()
                 );
+                // SQL92过滤表达式
                 if (!ExpressionType.isTagType(subscriptionData.getExpressionType())) {
                     consumerFilterData = ConsumerFilterManager.build(
                         requestHeader.getTopic(), requestHeader.getConsumerGroup(), requestHeader.getSubscription(),
@@ -199,7 +200,11 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                 return response;
             }
         } else {
-            // 没有设置subscribe flag，表示之前已经订阅过了，对比订阅条件是否一致
+            /**
+             * 没有设置subscribe flag，执行classFilter过滤模式，此时不够减SubscriptionData，
+             * 直接从brokerController.getConsumerFilterManager（）中根据topic，consumerGroup取，
+             * 如果取不到直接提示错误。
+             */
             ConsumerGroupInfo consumerGroupInfo =
                 this.brokerController.getConsumerManager().getConsumerGroupInfo(requestHeader.getConsumerGroup());
             if (null == consumerGroupInfo) {
@@ -254,7 +259,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
             }
         }
 
-        // 判断是否支持SQL表达式过滤
+        // 判断是否支持SQL表达式过滤，如果支持，需要在broker端开启enablePropertyMessageFilter=true
         if (!ExpressionType.isTagType(subscriptionData.getExpressionType())
             && !this.brokerController.getBrokerConfig().isEnablePropertyFilter()) {
             response.setCode(ResponseCode.SYSTEM_ERROR);
@@ -263,6 +268,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
         }
 
         MessageFilter messageFilter;
+        // 根据是否支持过滤重试创建ExpressionForRetryMessageFilter/ExpressionMessageFilter消息过滤器
         if (this.brokerController.getBrokerConfig().isFilterSupportRetry()) {
             messageFilter = new ExpressionForRetryMessageFilter(subscriptionData, consumerFilterData,
                 this.brokerController.getConsumerFilterManager());

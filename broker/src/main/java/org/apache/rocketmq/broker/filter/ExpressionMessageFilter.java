@@ -59,15 +59,18 @@ public class ExpressionMessageFilter implements MessageFilter {
 
     @Override
     public boolean isMatchedByConsumeQueue(Long tagsCode, ConsumeQueueExt.CqExtUnit cqExtUnit) {
+        // subscriptionData为null，说明此模式不是expression模式，直接返回true，
+        // 表示匹配信息，这里的Expression模式，也非ClassFilterMode，包括TAG、SQL92表达式
         if (null == subscriptionData) {
             return true;
         }
 
+        // 如果是classFilterMode，直接返回ture，即isMatchedByConsumeQueue不处理class filter mode
         if (subscriptionData.isClassFilterMode()) {
             return true;
         }
 
-        // by tags code.
+        // by tags code. 如果是tag模式，只需要对比tag的hashcode，因为consumequeue只包含了taghashcode
         if (ExpressionType.isTagType(subscriptionData.getExpressionType())) {
 
             if (tagsCode == null) {

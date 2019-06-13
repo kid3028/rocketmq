@@ -38,16 +38,19 @@ public class ExpressionForRetryMessageFilter extends ExpressionMessageFilter {
 
     @Override
     public boolean isMatchedByCommitLog(ByteBuffer msgBuffer, Map<String, String> properties) {
+        // subscriptionData为空，表示过滤模式为classFilter
         if (subscriptionData == null) {
             return true;
         }
 
+        // isClassFilterMode为true，表示过滤模式为classFilter，直接返回ture
         if (subscriptionData.isClassFilterMode()) {
             return true;
         }
 
         boolean isRetryTopic = subscriptionData.getTopic().startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX);
 
+        // 不是retryTopic，并且模式是TAG，直接返回， 即只为SQL92服务。SQL92是基于sql表示式的，但是里面的属性来源于消息体，所以需要从commitLog中解析消息体，并得到tag，然后进行匹配
         if (!isRetryTopic && ExpressionType.isTagType(subscriptionData.getExpressionType())) {
             return true;
         }

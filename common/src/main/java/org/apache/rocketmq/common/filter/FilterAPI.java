@@ -37,6 +37,14 @@ public class FilterAPI {
         return simple;
     }
 
+    /**
+     * 构建SubscriptionData TAG
+     * @param consumerGroup
+     * @param topic
+     * @param subString
+     * @return
+     * @throws Exception
+     */
     public static SubscriptionData buildSubscriptionData(final String consumerGroup, String topic,
         String subString) throws Exception {
         SubscriptionData subscriptionData = new SubscriptionData();
@@ -70,6 +78,14 @@ public class FilterAPI {
         return subscriptionData;
     }
 
+    /**
+     * 构建SubscriptionData
+     * @param topic
+     * @param subString
+     * @param type
+     * @return
+     * @throws Exception
+     */
     public static SubscriptionData build(final String topic, final String subString,
         final String type) throws Exception {
         if (ExpressionType.TAG.equals(type) || type == null) {
