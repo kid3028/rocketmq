@@ -29,10 +29,7 @@ import org.apache.rocketmq.common.protocol.header.UpdateConsumerOffsetRequestHea
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.remoting.exception.RemotingException;
 
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -42,7 +39,13 @@ import java.util.concurrent.atomic.AtomicLong;
  * 消费进度保存是不会存在并发的，但是在同一个消费者，非顺序消息时，一个消费者(多个线程)并发消费消息，比如m1<m2，但是m2先
  * 消费完了，此时该如何保存消费进度呢？
  *   例如，如果m2的offset为5，而m1的offset为4，如果m2先消费完，保存进度为5，那么m1消息消费完，保存进度为4，这样将会导致进度错误
- *
+ * 一次拉取的消息将会被放入msgTreeMap，msgTreeMap是treeMap的类型，按消息的offset进行升序排序，返回的result，如果treeMap中不存在任何的消息，
+ * 就返回该处理队列最大的偏移量+1，其实就是该处理队列最大的偏移量，因为result初始值是-1.如果移除自己本批次消息后，
+ * 处理队列中，还存在消息，则返回该处理队列中的最小的偏移量，也就是此时返回的偏移量有可能不是消息本身的偏移量，
+ * 而是处理队列中最小的偏移量。
+ * 这样做的优点：防止消息丢失
+ *       缺点：会造成重复消息
+ * 代码见{@link org.apache.rocketmq.client.impl.consumer.ProcessQueue#removeMessage(List)}
  * Remote storage implementation
  */
 public class RemoteBrokerOffsetStore implements OffsetStore {
