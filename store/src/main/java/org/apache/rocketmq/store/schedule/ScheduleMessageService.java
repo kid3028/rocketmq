@@ -29,6 +29,7 @@ import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.store.*;
 import org.apache.rocketmq.store.config.StorePathConfigHelper;
 
+import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentHashMap;
@@ -88,9 +89,17 @@ public class ScheduleMessageService extends ConfigManager {
         this.offsetTable.put(delayLevel, offset);
     }
 
+    /**
+     * 计算延时消息的到期时间
+     * @param delayLevel 延时等级存储时间
+     * @param storeTimestamp
+     * @return
+     */
     public long computeDeliverTimestamp(final int delayLevel, final long storeTimestamp) {
+        // 获取到延时等级对应的延时时间
         Long time = this.delayLevelTable.get(delayLevel);
         if (time != null) {
+            // delayTime + storeTime
             return time + storeTimestamp;
         }
 
@@ -237,6 +246,7 @@ public class ScheduleMessageService extends ConfigManager {
         @Override
         public void run() {
             try {
+                // 执行延时消息处理，将到期的消息进行投递
                 this.executeOnTimeup();
             } catch (Exception e) {
                 // XXX: warn and notify me
@@ -263,7 +273,7 @@ public class ScheduleMessageService extends ConfigManager {
 
 
         public void executeOnTimeup() {
-            // 找到该延时等级对应的ConsumeQueue
+            // 找到该延时等级（实际是将延时等级转化为queueId）对应的ConsumeQueue
             ConsumeQueue cq =
                     ScheduleMessageService.this.defaultMessageStore.findConsumeQueue(SCHEDULE_TOPIC,
                             delayLevel2QueueId(delayLevel));
@@ -286,11 +296,12 @@ public class ScheduleMessageService extends ConfigManager {
                             *  延时消息的tagCode和普通消息不一样
                              *  延时消息的tagCode：存储的是消息到期的事件
                              *  非延时消息的tagCode：tags字符串的hashCode
-                             *  对于延时消息到的tagCode的特别处理是在org.apache.rocketmq.store.CommitLog#checkMessageAndReturnSize(java.nio.ByteBuffer, boolean, boolean)
+                             *  对于延时消息到的tagCode的特别处理是在{@link CommitLog#checkMessageAndReturnSize(ByteBuffer, boolean, boolean)}
                              *  方法中完成到的，也就是在build ConsumeQueue信息的时候
                             */
                             long tagsCode = bufferCQ.getByteBuffer().getLong(); // 这个tagCode不再是普通的tag的hashCode，而是该延时消息到期到的时间
 
+                            // 检查tagsCode是否是扩展文件地址
                             if (cq.isExtAddr(tagsCode)) {
                                 if (cq.getExt(tagsCode, cqExtUnit)) {
                                     tagsCode = cqExtUnit.getTagsCode();
@@ -312,7 +323,9 @@ public class ScheduleMessageService extends ConfigManager {
                             // 判断消息是否到期
                             long countdown = deliverTimestamp - now;
 
+                            // countdown小于0，说明消息已经到期或者过期，立即执行投递
                             if (countdown <= 0) {
+                                // 从指定位置offsetPy开始，获取sizePy大小的数据
                                 MessageExt msgExt =
                                         ScheduleMessageService.this.defaultMessageStore.lookMessageByOffset(
                                                 offsetPy, sizePy);
@@ -321,7 +334,7 @@ public class ScheduleMessageService extends ConfigManager {
                                     try {
                                         // 将消息恢复到原始消息的格式，恢复topic，queueId，tagCode等，清除DELAY属性
                                         MessageExtBrokerInner msgInner = this.messageTimeup(msgExt);
-                                        // 投递消息
+                                        // 将恢复后的消息进行投递到commitLog 如果是重试消息，现在topic已经是%RETRY%_GROUPNAME
                                         PutMessageResult putMessageResult =
                                                 ScheduleMessageService.this.defaultMessageStore
                                                         .putMessage(msgInner);

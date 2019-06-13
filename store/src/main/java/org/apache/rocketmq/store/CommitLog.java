@@ -607,6 +607,10 @@ public class CommitLog {
         if (tranType == MessageSysFlag.TRANSACTION_NOT_TYPE
             || tranType == MessageSysFlag.TRANSACTION_COMMIT_TYPE) {
             // Delay Delivery
+            /**
+             * 在消息存入commitlog之前，如果发现延时level大于0，会将消息的主题设置为SCHEDULE_TOPIC="SCHEDULE_TOPIC_XXX",
+             * 然后备份原主题名称，也就是说，延时消息统一由ScheduleMessageService来处理
+             */
             if (msg.getDelayTimeLevel() > 0) {
                 // 纠正设置过大的level，就是delayLevel设置都大于延时时间等级的最大等级
                 if (msg.getDelayTimeLevel() > this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel()) {

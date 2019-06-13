@@ -560,6 +560,11 @@ public class ConsumeQueue {
         }
     }
 
+    /**
+     * 选择startIndex之后的消息
+     * @param startIndex
+     * @return
+     */
     public SelectMappedBufferResult getIndexBuffer(final long startIndex) {
         int mappedFileSize = this.mappedFileSize;
         // 计算offset
@@ -568,6 +573,7 @@ public class ConsumeQueue {
             // 根据offset找到MappedFile
             MappedFile mappedFile = this.mappedFileQueue.findMappedFileByOffset(offset);
             if (mappedFile != null) {
+                // 截取MappedBuffer
                 SelectMappedBufferResult result = mappedFile.selectMappedBuffer((int) (offset % mappedFileSize));
                 return result;
             }

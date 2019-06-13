@@ -269,6 +269,16 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
 
     /**
      * 处理消费结果
+     *   1.根据消费结果，设置ackIndex的值
+     *   2.如果是消费失败，根据消费模式(集群or广播)，广播模式下，直接丢弃，集群发送sendMessageBack,重新发送会broker
+     *   3.更新消息消费进度，不管消费成功与否，上述这些消息消费成功，其实就是修改消费偏移量，失败的会进行重试，会创建新的消息。
+     *
+     *  broker对发回重试消息的处理
+     *    1.如果delayLevel小于0或者重试次数达到上线，投入死信队列
+     *    2.如果delayLevel小于0，将delayLevel+3.
+     *    3.重试消息topic被修改为%RETRY%_GROUPNAME（集群消费下将会默认订阅该主题），然后重新持久化到commitlog
+     *    4.在处理commitLog时，如果发现msg的delayLevel大于0，那么会将消息主题设置为SCHEDULE_TOPIC_XXX,并备份原主题，
+     *    稍后延时任务会被ScheduleMessageService延时拉取
      * @param status
      * @param context
      * @param consumeRequest
@@ -369,6 +379,16 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
         return false;
     }
 
+    /**
+     * 如果发送ack消息失败，则会延迟5s后重新在消费端重新消费
+     * 首先消费者向broker发送ack消息，如果发送成功，重试机制由broker处理，
+     * 如果发送失败，则将该任务直接在消费者这边延时5s重新消费。如果还是消费失败，
+     * 并且发回broker也失败，继续停留在consumer这边延时5s后再消费。
+     * 直到达到重试上限或者用户停止重试阈值。
+     * @param msgs
+     * @param processQueue
+     * @param messageQueue
+     */
     private void submitConsumeRequestLater(
         final List<MessageExt> msgs,
         final ProcessQueue processQueue,

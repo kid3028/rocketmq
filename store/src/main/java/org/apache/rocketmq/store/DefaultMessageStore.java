@@ -1172,10 +1172,17 @@ public class DefaultMessageStore implements MessageStore {
         this.commitLog.setConfirmOffset(phyOffset);
     }
 
+    /**
+     * 从指定offset开始，获取指定大小的message
+     * @param commitLogOffset
+     * @param size
+     * @return
+     */
     public MessageExt lookMessageByOffset(long commitLogOffset, int size) {
         SelectMappedBufferResult sbr = this.commitLog.getMessage(commitLogOffset, size);
         if (null != sbr) {
             try {
+                // 将buffer数据转化为MessageExt
                 return MessageDecoder.decode(sbr.getByteBuffer(), true, false);
             } finally {
                 sbr.release();
@@ -1192,6 +1199,7 @@ public class DefaultMessageStore implements MessageStore {
      * @return
      */
     public ConsumeQueue findConsumeQueue(String topic, int queueId) {
+        // Map<topic, Map<queueId, ConsumeQueue>>
         ConcurrentMap<Integer, ConsumeQueue> map = consumeQueueTable.get(topic);
         if (null == map) {
             ConcurrentMap<Integer, ConsumeQueue> newMap = new ConcurrentHashMap<Integer, ConsumeQueue>(128);
