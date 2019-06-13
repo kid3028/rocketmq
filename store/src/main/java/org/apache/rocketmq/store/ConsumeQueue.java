@@ -418,6 +418,10 @@ public class ConsumeQueue {
         }
     }
 
+    /**
+     * 计算最小offset
+     * @return
+     */
     public long getMinOffsetInQueue() {
         return this.minLogicOffset / CQ_STORE_UNIT_SIZE;
     }

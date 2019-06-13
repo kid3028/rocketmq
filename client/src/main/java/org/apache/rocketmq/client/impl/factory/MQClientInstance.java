@@ -1077,6 +1077,7 @@ public class MQClientInstance {
         boolean slave = false;
         boolean found = false;
 
+        // Map<brokerName, Map<brokerId, address>>
         HashMap<Long/* brokerId */, String/* address */> map = this.brokerAddrTable.get(brokerName);
         if (map != null && !map.isEmpty()) {
             for (Map.Entry<Long, String> entry : map.entrySet()) {

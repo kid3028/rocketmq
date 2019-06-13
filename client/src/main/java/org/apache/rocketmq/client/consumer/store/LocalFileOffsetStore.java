@@ -40,19 +40,24 @@ import java.util.concurrent.atomic.AtomicLong;
  * Local storage implementation
  */
 public class LocalFileOffsetStore implements OffsetStore {
+    // offset的存储根目录，默认时用户主目录  可以在消费这启动的JVM参数中，通过-Drocketmq.client.localOffsetStoreDir指定
     public final static String LOCAL_OFFSET_STORE_DIR = System.getProperty(
         "rocketmq.client.localOffsetStoreDir",
         System.getProperty("user.home") + File.separator + ".rocketmq_offsets");
     private final static InternalLogger log = ClientLogger.getLog();
     private final MQClientInstance mQClientFactory;
+    // 消费者组名称
     private final String groupName;
+    // 具体的消费进度保存文件名(全路径)
     private final String storePath;
+    // 内存中offset进度保持，以MessageQueue为键，偏移量为值
     private ConcurrentMap<MessageQueue, AtomicLong> offsetTable =
         new ConcurrentHashMap<MessageQueue, AtomicLong>();
 
     public LocalFileOffsetStore(MQClientInstance mQClientFactory, String groupName) {
         this.mQClientFactory = mQClientFactory;
         this.groupName = groupName;
+        // /home/qull/IP@instanceName@unitName/conusmerGroupName/offset.json
         this.storePath = LOCAL_OFFSET_STORE_DIR + File.separator +
             this.mQClientFactory.getClientId() + File.separator +
             this.groupName + File.separator +
@@ -146,12 +151,14 @@ public class LocalFileOffsetStore implements OffsetStore {
 
         OffsetSerializeWrapper offsetSerializeWrapper = new OffsetSerializeWrapper();
         for (Map.Entry<MessageQueue, AtomicLong> entry : this.offsetTable.entrySet()) {
+            // offsetTable中已经有该队列的消费进度，则更新消费进度
             if (mqs.contains(entry.getKey())) {
                 AtomicLong offset = entry.getValue();
                 offsetSerializeWrapper.getOffsetTable().put(entry.getKey(), offset);
             }
         }
 
+        // 序列化为json
         String jsonString = offsetSerializeWrapper.toJson(true);
         if (jsonString != null) {
             try {

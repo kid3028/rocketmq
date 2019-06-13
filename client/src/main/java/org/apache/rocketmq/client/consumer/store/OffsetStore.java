@@ -16,14 +16,23 @@
  */
 package org.apache.rocketmq.client.consumer.store;
 
-import java.util.Map;
-import java.util.Set;
 import org.apache.rocketmq.client.exception.MQBrokerException;
 import org.apache.rocketmq.client.exception.MQClientException;
 import org.apache.rocketmq.common.message.MessageQueue;
 import org.apache.rocketmq.remoting.exception.RemotingException;
 
+import java.util.Map;
+import java.util.Set;
+
 /**
+ * 首先消费者订阅消息消费队列(MessageQueue),当生产者将消息负载发送到MessageQueue中时，消费订阅者开始消费消息，
+ * 消息消费过程中，为了避免重复消费，需要有一个地方保存消费进度(消费偏移量)。
+ *
+ * 消息消费模式分为集群模式、广播模式：
+ *    集群模式：一条消息被集群中任何一个消息费者消费
+ *    广播模式：每条消息都被每一个消费者消费
+ * 广播模式，既然每条消息要被每一个消费者消费，则消费进度可以与消费者保存在一起，也就是消费者本地保存，
+ * 但是由于集群模式下，一条消息只能被集群中的一个消费者消费，进度不能保存在消费端，只能集中保存在一个地方，即保存在Broker端
  * Offset store interface
  */
 public interface OffsetStore {

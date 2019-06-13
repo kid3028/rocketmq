@@ -38,15 +38,24 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
+ * 在集群消费模式下，多个消费者会负载到不同的消费队列上，因为消息消费进度是基于消息队列进行保存的，也就是不同的消费者之间的
+ * 消费进度保存是不会存在并发的，但是在同一个消费者，非顺序消息时，一个消费者(多个线程)并发消费消息，比如m1<m2，但是m2先
+ * 消费完了，此时该如何保存消费进度呢？
+ *   例如，如果m2的offset为5，而m1的offset为4，如果m2先消费完，保存进度为5，那么m1消息消费完，保存进度为4，这样将会导致进度错误
+ *
  * Remote storage implementation
  */
 public class RemoteBrokerOffsetStore implements OffsetStore {
     private final static InternalLogger log = ClientLogger.getLog();
+    // MQ客户端实例，该实例被同一个JVM进程的消费者、生产者
     private final MQClientInstance mQClientFactory;
+    // MQ消费组
     private final String groupName;
+    // 消费进度存储(内存中)
     private ConcurrentMap<MessageQueue, AtomicLong> offsetTable =
         new ConcurrentHashMap<MessageQueue, AtomicLong>();
 
+    // 构造方法
     public RemoteBrokerOffsetStore(MQClientInstance mQClientFactory, String groupName) {
         this.mQClientFactory = mQClientFactory;
         this.groupName = groupName;
@@ -65,11 +74,14 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
     @Override
     public void updateOffset(MessageQueue mq, long offset, boolean increaseOnly) {
         if (mq != null) {
+            // 获取到该mq对应的消费进度
             AtomicLong offsetOld = this.offsetTable.get(mq);
+            // 如果没有put进去
             if (null == offsetOld) {
                 offsetOld = this.offsetTable.putIfAbsent(mq, new AtomicLong(offset));
             }
 
+            // 如果存在，CAS更新消费进度
             if (null != offsetOld) {
                 if (increaseOnly) {
                     MixAll.compareAndIncreaseOnly(offsetOld, offset);
@@ -80,21 +92,32 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
         }
     }
 
+    /**
+     * 根据type，读取消费队列的消费进度
+     * @param mq
+     * @param type
+     * @return
+     */
     @Override
     public long readOffset(final MessageQueue mq, final ReadOffsetType type) {
         if (mq != null) {
             switch (type) {
+                // 先从内存中读取，如果内存中不存在，再尝试冲磁盘中读取
                 case MEMORY_FIRST_THEN_STORE:
+                // 从内存中读取
                 case READ_FROM_MEMORY: {
                     AtomicLong offset = this.offsetTable.get(mq);
+                    // 如果从内存中读取到了，返回读取到的值，否则，返回-1
                     if (offset != null) {
                         return offset.get();
                     } else if (ReadOffsetType.READ_FROM_MEMORY == type) {
                         return -1;
                     }
                 }
+                // 从存储中读取
                 case READ_FROM_STORE: {
                     try {
+                        // 向brokerName查询消费进度
                         long brokerOffset = this.fetchConsumeOffsetFromBroker(mq);
                         AtomicLong offset = new AtomicLong(brokerOffset);
                         this.updateOffset(mq, offset.get(), false);
@@ -248,9 +271,10 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
 
     private long fetchConsumeOffsetFromBroker(MessageQueue mq) throws RemotingException, MQBrokerException,
         InterruptedException, MQClientException {
+        // 根据brokerName获取broker信息
         FindBrokerResult findBrokerResult = this.mQClientFactory.findBrokerAddressInAdmin(mq.getBrokerName());
         if (null == findBrokerResult) {
-
+            // 如果没有找到broker，从NameServer拉取
             this.mQClientFactory.updateTopicRouteInfoFromNameServer(mq.getTopic());
             findBrokerResult = this.mQClientFactory.findBrokerAddressInAdmin(mq.getBrokerName());
         }
@@ -261,6 +285,7 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
             requestHeader.setConsumerGroup(this.groupName);
             requestHeader.setQueueId(mq.getQueueId());
 
+            // 获取消费进度
             return this.mQClientFactory.getMQClientAPIImpl().queryConsumerOffset(
                 findBrokerResult.getBrokerAddr(), requestHeader, 1000 * 5);
         } else {

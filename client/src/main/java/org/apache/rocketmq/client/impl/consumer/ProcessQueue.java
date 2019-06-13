@@ -198,8 +198,14 @@ public class ProcessQueue {
     /**
      * 清除消息
      *  清空msgTreeMap
+     * msgTreeMap是treeMap的类型，按消息的offset进行升序排序，返回的result，如果treeMap中不存在任何的消息，
+     * 就返回该处理队列最大的偏移量+1，其实就是该处理队列最大的偏移量，因为result初始值是-1.如果移除自己本批次消息后，
+     * 处理队列中，还存在消息，则返回该处理队列中的最小的偏移量，也就是此时返回的偏移量有可能不是消息本身的偏移量，
+     * 而是处理队列中最小的偏移量。
+     * 这样做的优点：防止消息丢失
+     *       缺点：会造成重复消息
      * @param msgs
-     * @return
+     * @return 返回要更新的offset
      */
     public long removeMessage(final List<MessageExt> msgs) {
         long result = -1;

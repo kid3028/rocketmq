@@ -147,6 +147,12 @@ public class MixAll {
         file.renameTo(new File(fileName));
     }
 
+    /**
+     * 将str持久化到fileName文件中
+     * @param str
+     * @param fileName
+     * @throws IOException
+     */
     public static void string2FileNotSafe(final String str, final String fileName) throws IOException {
         File file = new File(fileName);
         File fileParent = file.getParentFile();
@@ -438,6 +444,12 @@ public class MixAll {
         return null;
     }
 
+    /**
+     * CAS原子更新
+     * @param target
+     * @param value
+     * @return
+     */
     public static boolean compareAndIncreaseOnly(final AtomicLong target, final long value) {
         long prev = target.get();
         while (value > prev) {

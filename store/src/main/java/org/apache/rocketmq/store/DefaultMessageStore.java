@@ -703,6 +703,12 @@ public class DefaultMessageStore implements MessageStore {
         return 0;
     }
 
+    /**
+     * 获取queue的最小进度
+     * @param topic Topic name.
+     * @param queueId Queue ID.
+     * @return
+     */
     public long getMinOffsetInQueue(String topic, int queueId) {
         ConsumeQueue logic = this.findConsumeQueue(topic, queueId);
         if (logic != null) {
