@@ -345,6 +345,7 @@ public class MappedFileQueue {
         // 取到文件逻辑队列最后一个的消费位置返回给HAClient
         MappedFile mappedFile = getLastMappedFile();
         if (mappedFile != null) {
+            // 当前文件第一条消息的偏移量 + 当前最大可读取位置(当前的写位置或者提交位置)
             return mappedFile.getFileFromOffset() + mappedFile.getReadPosition();
         }
         return 0;

@@ -19,6 +19,9 @@ package org.apache.rocketmq.store;
 import java.nio.ByteBuffer;
 import java.util.Map;
 
+/**
+ * 消息过滤接口
+ */
 public interface MessageFilter {
     /**
      * match by tags code or filter bit map which is calculated when message received

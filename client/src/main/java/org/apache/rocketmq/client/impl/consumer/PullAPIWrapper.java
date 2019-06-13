@@ -87,6 +87,14 @@ public class PullAPIWrapper {
                 msgListFilterAgain = new ArrayList<MessageExt>(msgList.size());
                 for (MessageExt msg : msgList) {
                     if (msg.getTags() != null) {
+                        /**
+                         * 在consumer端的过滤是tag字符串的比较，而不是hashcode
+                         * 在broker端进行message tag过滤的时候比较的是hashcode。
+                         * 如此设计在于：
+                         *   1.message tag在broker存储hashcode，便于做定长存储，节约空间
+                         *   2.broker在过滤过程中不会访问commitLog数据，可以保证堆积情况下也能高效的过滤
+                         *   3.即使存在hash冲突，也可以在consumer端进行修正，保证数据过滤正确性
+                         */
                         if (subscriptionData.getTagsSet().contains(msg.getTags())) {
                             msgListFilterAgain.add(msg);
                         }

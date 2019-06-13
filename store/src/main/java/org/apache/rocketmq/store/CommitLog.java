@@ -985,7 +985,13 @@ public class CommitLog {
         return null;
     }
 
+    /**
+     * 切换到下一页
+     * @param offset
+     * @return
+     */
     public long rollNextFile(final long offset) {
+        // 每个mappedFile文件大小 1G
         int mappedFileSize = this.defaultMessageStore.getMessageStoreConfig().getMapedFileSizeCommitLog();
         return offset + mappedFileSize - offset % mappedFileSize;
     }

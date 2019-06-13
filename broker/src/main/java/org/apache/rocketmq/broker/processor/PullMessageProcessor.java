@@ -180,10 +180,10 @@ public class PullMessageProcessor implements NettyRequestProcessor {
         // 有设置subscribe flag，表示第一次pull或者需要更新filter
         if (hasSubscriptionFlag) {
             try {
-                subscriptionData = FilterAPI.build(
-                    requestHeader.getTopic(), requestHeader.getSubscription(), requestHeader.getExpressionType()
-                );
                 // 是否使用了表达式过滤
+                subscriptionData = FilterAPI.build(
+                        requestHeader.getTopic(), requestHeader.getSubscription(), requestHeader.getExpressionType()
+                );
                 if (!ExpressionType.isTagType(subscriptionData.getExpressionType())) {
                     consumerFilterData = ConsumerFilterManager.build(
                         requestHeader.getTopic(), requestHeader.getConsumerGroup(), requestHeader.getSubscription(),
@@ -283,7 +283,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
             this.brokerController.getMessageStore().getMessage(requestHeader.getConsumerGroup(), requestHeader.getTopic(),
                 requestHeader.getQueueId(), requestHeader.getQueueOffset(), requestHeader.getMaxMsgNums(), messageFilter);
         if (getMessageResult != null) {
-            // 根据读取到的内容设合资response header
+            // 根据读取到的内容设置response header
             response.setRemark(getMessageResult.getStatus().name());
             responseHeader.setNextBeginOffset(getMessageResult.getNextBeginOffset());
             responseHeader.setMinOffset(getMessageResult.getMinOffset());

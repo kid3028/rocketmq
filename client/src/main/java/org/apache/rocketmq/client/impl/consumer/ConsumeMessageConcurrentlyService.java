@@ -205,7 +205,7 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
         final MessageQueue messageQueue,
         final boolean dispatchToConsume) {
         final int consumeBatchSize = this.defaultMQPushConsumer.getConsumeMessageBatchMaxSize();
-        // 如果本次拉取的消息数量大于ConsumeMessageBatchMaxSize，则分批次消费
+        // 如果本次拉取的消息数量大于ConsumeMessageBatchMaxSize, 默认是1，则分批次消费
         if (msgs.size() <= consumeBatchSize) {
             // 封装成ConsumeRequest
             ConsumeRequest consumeRequest = new ConsumeRequest(msgs, processQueue, messageQueue);

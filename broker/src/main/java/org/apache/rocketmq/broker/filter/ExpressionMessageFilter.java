@@ -114,8 +114,17 @@ public class ExpressionMessageFilter implements MessageFilter {
         return true;
     }
 
+    /**
+     * 对commitLog再次过滤
+     * 因为consumequeue中只能处理tag模式的过滤，SQL92这种模式无法过滤，因为SLQ92需要依赖消息中的属性，
+     * 所以在这里再做一次过滤。
+     * @param msgBuffer message buffer in commit log, may be null if not invoked in store.
+     * @param properties message properties, should decode from buffer if null by yourself.
+     * @return
+     */
     @Override
     public boolean isMatchedByCommitLog(ByteBuffer msgBuffer, Map<String, String> properties) {
+        // 订阅为空，默认全部订阅，返回true
         if (subscriptionData == null) {
             return true;
         }
@@ -124,6 +133,7 @@ public class ExpressionMessageFilter implements MessageFilter {
             return true;
         }
 
+        // 如果时tag过滤，不做处理，返回true（broker拉消息时，tag过滤已经在该过滤器之前执行，所以这里不需要再进行tag过滤）
         if (ExpressionType.isTagType(subscriptionData.getExpressionType())) {
             return true;
         }
@@ -131,12 +141,13 @@ public class ExpressionMessageFilter implements MessageFilter {
         ConsumerFilterData realFilterData = this.consumerFilterData;
         Map<String, String> tempProperties = properties;
 
-        // no expression
+        // no expression 没有指定表达式，返回true
         if (realFilterData == null || realFilterData.getExpression() == null
             || realFilterData.getCompiledExpression() == null) {
             return true;
         }
 
+        // 解码得到msg属性
         if (tempProperties == null && msgBuffer != null) {
             tempProperties = MessageDecoder.decodeProperties(msgBuffer);
         }
@@ -145,6 +156,7 @@ public class ExpressionMessageFilter implements MessageFilter {
         try {
             MessageEvaluationContext context = new MessageEvaluationContext(tempProperties);
 
+            // 评估值
             ret = realFilterData.getCompiledExpression().evaluate(context);
         } catch (Throwable e) {
             log.error("Message Filter error, " + realFilterData + ", " + tempProperties, e);

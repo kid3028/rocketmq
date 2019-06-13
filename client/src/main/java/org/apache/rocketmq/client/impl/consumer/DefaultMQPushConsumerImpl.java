@@ -354,6 +354,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                             }
 
                             break;
+                        // 没有拉取到消息，立马加入待拉取任务，然后PullMessageService会立马开始遍历拉取任务
                         case NO_NEW_MSG:
                             pullRequest.setNextOffset(pullResult.getNextBeginOffset());
 
@@ -368,11 +369,14 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
 
                             DefaultMQPushConsumerImpl.this.executePullRequestImmediately(pullRequest);
                             break;
+                        // 偏移量非法，暂时停止从该队列拉消息，持久化该messagequeue，然后丢弃ProcessQueue，待下次队列负载时，根据消费进度重新再拉取
                         case OFFSET_ILLEGAL:
                             log.warn("the pull request offset illegal, {} {}",
                                 pullRequest.toString(), pullResult.toString());
+                            // 设置下一次拉取进度
                             pullRequest.setNextOffset(pullResult.getNextBeginOffset());
 
+                            // 将当前ProcessQueue丢弃
                             pullRequest.getProcessQueue().setDropped(true);
                             DefaultMQPushConsumerImpl.this.executeTaskLater(new Runnable() {
 
