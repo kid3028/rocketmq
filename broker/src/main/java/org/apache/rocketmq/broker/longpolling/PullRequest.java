@@ -22,12 +22,19 @@ import org.apache.rocketmq.remoting.protocol.RemotingCommand;
 import org.apache.rocketmq.store.MessageFilter;
 
 public class PullRequest {
+    // 请求命令
     private final RemotingCommand requestCommand;
+    // 网络通道
     private final Channel clientChannel;
+    // 超时时长
     private final long timeoutMillis;
+    // 挂起开始时间戳，如果当前系统时间>=(timeoutMillis + suspendTimestamp)表示已经超时
     private final long suspendTimestamp;
+    // 拉取消息队列偏移量
     private final long pullFromThisOffset;
+    // 订阅信息
     private final SubscriptionData subscriptionData;
+    // 消息过滤器
     private final MessageFilter messageFilter;
 
     public PullRequest(RemotingCommand requestCommand, Channel clientChannel, long timeoutMillis, long suspendTimestamp,

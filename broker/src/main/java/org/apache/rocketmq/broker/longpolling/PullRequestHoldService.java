@@ -30,6 +30,19 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+/**
+ * 消息拉取时为了提交网络性能，在消息服务端根据拉去偏移量去物理文件查找消息时，如果没有找到，并不会立即返回消费未找到，
+ * 而是会将该线程挂起一段时间，然后重试。
+ * 挂起分为长轮询和短轮询，在broker端可以通过longPullingEnable=true来开启长轮询，设置longPullingEnable=true开启短轮询。
+ * 短轮询：第一次未拉取到消息后等待shortPollingTimeMillis时间后再试。默认1s
+ * 长轮询：根据消费者设置的挂起超时时间，DefaultMQPullConsumer#brokerSuspendMaxTimeMillis,默认20s
+ *
+ * 长轮询通过两个线程实现：
+ *   1.PullRequestHoldService，每隔5s重试一次
+ *   2.DefaultMessageStore#ReputMessageService
+ *   每当有消息达到后，转发消息，然后调用PullRequestHoldService线程中拉去任务，尝试拉取，每处理一次，Thread.sleep(1)，继续下次检查
+ *
+ */
 public class PullRequestHoldService extends ServiceThread {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     private static final String TOPIC_QUEUEID_SEPARATOR = "@";
@@ -82,9 +95,11 @@ public class PullRequestHoldService extends ServiceThread {
         log.info("{} service started", this.getServiceName());
         while (!this.isStopped()) {
             try {
+                // 如果开启了长轮询模式，每次挂起5s后尝试拉取
                 if (this.brokerController.getBrokerConfig().isLongPollingEnable()) {
                     this.waitForRunning(5 * 1000);
                 } else {
+                    // 短轮询，只挂起一次，挂起时间为shortPollingTimeMillis，然后便尝试获取消息
                     this.waitForRunning(this.brokerController.getBrokerConfig().getShortPollingTimeMills());
                 }
 
@@ -117,8 +132,10 @@ public class PullRequestHoldService extends ServiceThread {
             if (2 == kArray.length) {
                 String topic = kArray[0];
                 int queueId = Integer.parseInt(kArray[1]);
+                // 获取topic queueId的最新偏移量
                 final long offset = this.brokerController.getMessageStore().getMaxOffsetInQueue(topic, queueId);
                 try {
+                    // 唤醒等待线程，判断是否有新的消息到达
                     this.notifyMessageArriving(topic, queueId, offset);
                 } catch (Throwable e) {
                     log.error("check hold request failed. topic={}, queueId={}", topic, queueId, e);
@@ -134,16 +151,17 @@ public class PullRequestHoldService extends ServiceThread {
     /**
      * 定时任务会定时调用该方法
      * 当ReputMessageService发现有新消息时，也会调用该方法
-     * @param topic
-     * @param queueId
-     * @param maxOffset
-     * @param tagsCode
-     * @param msgStoreTime
-     * @param filterBitMap
+     * @param topic 主题
+     * @param queueId 队列
+     * @param maxOffset 消息队列当前最大偏移量
+     * @param tagsCode 消息tag hashcode，基于tag过滤
+     * @param msgStoreTime 消息存储时间
+     * @param filterBitMap 过滤位图
      * @param properties
      */
     public void notifyMessageArriving(final String topic, final int queueId, final long maxOffset, final Long tagsCode,
         long msgStoreTime, byte[] filterBitMap, Map<String, String> properties) {
+        // topic@queueId
         String key = this.buildKey(topic, queueId);
         ManyPullRequest mpr = this.pullRequestTable.get(key);
         if (mpr != null) {

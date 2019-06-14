@@ -28,6 +28,17 @@ public class NotifyMessageArrivingListener implements MessageArrivingListener {
         this.pullRequestHoldService = pullRequestHoldService;
     }
 
+    /**
+     * 有新消息到达，唤醒等待拉取消息请求
+     *   只要待拉取偏移量小于消息消费队列的最大偏移量，就可以被唤醒进行消息拉取
+     * @param topic
+     * @param queueId
+     * @param logicOffset
+     * @param tagsCode
+     * @param msgStoreTime
+     * @param filterBitMap
+     * @param properties
+     */
     @Override
     public void arriving(String topic, int queueId, long logicOffset, long tagsCode,
         long msgStoreTime, byte[] filterBitMap, Map<String, String> properties) {

@@ -22,6 +22,12 @@ import java.util.List;
 public class ManyPullRequest {
     private final ArrayList<PullRequest> pullRequestList = new ArrayList<>();
 
+    /**
+     * 两个添加方法加锁的原因
+     * ReputMessageService内部会持有PullRequestHoldService的引用，也就是在运行过程中，对于拉取任务，
+     * ReputMessageService和PullRequestHoldService处理的任务是同一个集合
+     * @param pullRequest
+     */
     public synchronized void addPullRequest(final PullRequest pullRequest) {
         this.pullRequestList.add(pullRequest);
     }

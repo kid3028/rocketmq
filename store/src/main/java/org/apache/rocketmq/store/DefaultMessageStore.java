@@ -292,6 +292,7 @@ public class DefaultMessageStore implements MessageStore {
         }
 
         // 启动ReputMessageService，该服务负责将CommitLog中的消息offset记录到consumeQueue文件中
+        // 设置reputFromOffset偏移量，如果允许重复，初始化偏移量为confirmOffset，否则设置为commitLog当前最大偏移量
         if (this.getMessageStoreConfig().isDuplicationEnable()) {
             this.reputMessageService.setReputFromOffset(this.commitLog.getConfirmOffset());
         } else {
@@ -522,10 +523,6 @@ public class DefaultMessageStore implements MessageStore {
         return systemClock;
     }
 
-    public CommitLog getCommitLog() {
-        return commitLog;
-    }
-
     /**
      * 拉取消息
      * @param group Consumer group that launches this query.
@@ -537,8 +534,8 @@ public class DefaultMessageStore implements MessageStore {
      * @return
      */
     public GetMessageResult getMessage(final String group, final String topic, final int queueId, final long offset,
-        final int maxMsgNums,
-        final MessageFilter messageFilter) {
+                                       final int maxMsgNums,
+                                       final MessageFilter messageFilter) {
         if (this.shutdown) {
             log.warn("message store has shutdown, so getMessage is forbidden");
             return null;
@@ -648,7 +645,7 @@ public class DefaultMessageStore implements MessageStore {
 
                             // 本次拉取任务是否已经完成
                             if (this.isTheBatchFull(sizePy, maxMsgNums, getResult.getBufferTotalSize(), getResult.getMessageCount(),
-                                isInDisk)) {
+                                    isInDisk)) {
                                 break;
                             }
 
@@ -660,14 +657,14 @@ public class DefaultMessageStore implements MessageStore {
                                 } else {
                                     // can't find ext content.Client will filter messages by tag also.
                                     log.error("[BUG] can't find consume queue extend file content!addr={}, offsetPy={}, sizePy={}, topic={}, group={}",
-                                        tagsCode, offsetPy, sizePy, topic, group);
+                                            tagsCode, offsetPy, sizePy, topic, group);
                                     isTagsCodeLegal = false;
                                 }
                             }
 
                             // tag过滤 如果messageFilter不为空，并且消息过滤失败(不是订阅的消息)，进入过滤下一条消息
                             if (messageFilter != null
-                                && !messageFilter.isMatchedByConsumeQueue(isTagsCodeLegal ? tagsCode : null, extRet ? cqExtUnit : null)) {
+                                    && !messageFilter.isMatchedByConsumeQueue(isTagsCodeLegal ? tagsCode : null, extRet ? cqExtUnit : null)) {
                                 if (getResult.getBufferTotalSize() == 0) {
                                     status = GetMessageStatus.NO_MATCHED_MESSAGE;
                                 }
@@ -689,7 +686,7 @@ public class DefaultMessageStore implements MessageStore {
 
                             // SQL92过滤
                             if (messageFilter != null
-                                && !messageFilter.isMatchedByCommitLog(selectResult.getByteBuffer().slice(), null)) {
+                                    && !messageFilter.isMatchedByCommitLog(selectResult.getByteBuffer().slice(), null)) {
                                 if (getResult.getBufferTotalSize() == 0) {
                                     status = GetMessageStatus.NO_MATCHED_MESSAGE;
                                 }
@@ -718,7 +715,7 @@ public class DefaultMessageStore implements MessageStore {
                         // 如果当前消息积压已经超过了可用最大内存，那么建议下次从Slave拉取消息
                         long diff = maxOffsetPy - maxPhyOffsetPulling;
                         long memory = (long) (StoreUtil.TOTAL_PHYSICAL_MEMORY_SIZE
-                            * (this.messageStoreConfig.getAccessMessageInMemoryMaxRatio() / 100.0));
+                                * (this.messageStoreConfig.getAccessMessageInMemoryMaxRatio() / 100.0));
                         getResult.setSuggestPullingFromSlave(diff > memory);
                     } finally {
 
@@ -728,7 +725,7 @@ public class DefaultMessageStore implements MessageStore {
                     status = GetMessageStatus.OFFSET_FOUND_NULL;
                     nextBeginOffset = nextOffsetCorrection(offset, consumeQueue.rollNextFile(offset));
                     log.warn("consumer request topic: " + topic + "offset: " + offset + " minOffset: " + minOffset + " maxOffset: "
-                        + maxOffset + ", but access logic queue failed.");
+                            + maxOffset + ", but access logic queue failed.");
                 }
             }
         } else {
@@ -750,6 +747,10 @@ public class DefaultMessageStore implements MessageStore {
         getResult.setMaxOffset(maxOffset);
         getResult.setMinOffset(minOffset);
         return getResult;
+    }
+
+    public CommitLog getCommitLog() {
+        return commitLog;
     }
 
     public long getMaxOffsetInQueue(String topic, int queueId) {

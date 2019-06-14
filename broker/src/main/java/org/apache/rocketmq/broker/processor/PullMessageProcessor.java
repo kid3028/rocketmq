@@ -105,9 +105,9 @@ public class PullMessageProcessor implements NettyRequestProcessor {
      *    b = RocketMQ可用的内存大小
      *    如果a > b 则判断为消息消费过慢，a > b 表示需要消费的消息一定不在存在中了，还需读取文件，这样会给还需要写消息的broker带来一定的性能压力，
      *    所以这个时候master建议从slave读取消息
-     * @param channel
-     * @param request
-     * @param brokerAllowSuspend
+     * @param channel 网络通道
+     * @param request 消息拉取请求
+     * @param brokerAllowSuspend 是否允许挂起，也就是是否允许在未找到消息时暂时挂起线程，第一次调用时默认为ture
      * @return
      * @throws RemotingCommandException
      */
@@ -476,6 +476,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                         response = null;
                     }
                     break;
+                // 没有拉取到消息，服务端会默认挂起线程，然后根据是否启用长轮询机制，延迟一定时间后再次重试根据偏移量查找消息
                 case ResponseCode.PULL_NOT_FOUND:
                     /**
                      * 没有读取到消息，则hold住请求，有新消息时唤醒，等待超时后还是没有读到brokerAllowSuspend=false
@@ -490,12 +491,14 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                             pollingTimeMills = this.brokerController.getBrokerConfig().getShortPollingTimeMills();
                         }
 
+                        // 创建PullRequest，然后提交给PullRequestHoldService线程去调度，触发消息拉取
                         String topic = requestHeader.getTopic();
                         long offset = requestHeader.getQueueOffset();
                         int queueId = requestHeader.getQueueId();
                         PullRequest pullRequest = new PullRequest(request, channel, pollingTimeMills,
                             this.brokerController.getMessageStore().now(), offset, subscriptionData, messageFilter);
                         this.brokerController.getPullRequestHoldService().suspendPullRequest(topic, queueId, pullRequest);
+                        // 关键，设置response=null，则此时此次调用不会向客户端输出任何字节，客户端网络请求的读事件不会触发，也就不会触发对响应结果的处理，处于等待状态
                         response = null;
                         break;
                     }
@@ -611,14 +614,22 @@ public class PullMessageProcessor implements NettyRequestProcessor {
         }
     }
 
+    /**
+     * 执行请求
+     * @param channel
+     * @param request
+     * @throws RemotingCommandException
+     */
     public void executeRequestWhenWakeup(final Channel channel,
         final RemotingCommand request) throws RemotingCommandException {
         Runnable run = new Runnable() {
             @Override
             public void run() {
                 try {
+                    // 再次向PullMessageProcessor发起调用 false--> 如果没有找到消息就不会挂起
                     final RemotingCommand response = PullMessageProcessor.this.processRequest(channel, request, false);
 
+                    // 结果不空返回
                     if (response != null) {
                         response.setOpaque(request.getOpaque());
                         response.markResponseType();
