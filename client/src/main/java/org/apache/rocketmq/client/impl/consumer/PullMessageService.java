@@ -22,6 +22,8 @@ import org.apache.rocketmq.common.ServiceThread;
 import org.apache.rocketmq.common.utils.ThreadUtils;
 import org.apache.rocketmq.logging.InternalLogger;
 
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.*;
 
 /**
@@ -99,6 +101,21 @@ public class PullMessageService extends ServiceThread {
 
         while (!this.isStopped()) {
             try {
+                /**
+                 * PullRequest的产生
+                 * PullRequest是由RebalanceService产生的，它根据主题消息队列个数和当前消费组内消费者个数进行负载
+                 * {@link RebalanceImpl#updateProcessQueueTableInRebalance(String, Set, boolean)} ，更新负载信息，
+                 * 然后产生对应的PullRequest对象，调用{@link RebalanceImpl#dispatchPullRequest(List)}，再将这些对象放入到PullMessageService的pullRequestQueue队列中，
+                 *
+                 * 在pull模式下{@link RebalancePullImpl#dispatchPullRequest(List)} 实现为空，所以这里的拉消息将不会真正执行拉取，
+                 * 因为此时pullRequestQueue为空，调用take将会阻塞
+                 *
+                 * 因此PullMess只为push模式服务，RebalanceService进行路由重新分配时，如果是RebalancePullImpl，并不会产生PullRequest，
+                 *
+                 * {@link LinkedBlockingQueue#take()} 如果队列为空，发生阻塞，等待有元素
+                 * {@link LinkedBlockingQueue#poll()} 如果队列为空，返回null
+                 * {@link LinkedBlockingQueue#remove()} 如果队列为空，抛出NoSuchElementException
+                 */
                 PullRequest pullRequest = this.pullRequestQueue.take();
                 this.pullMessage(pullRequest);
             } catch (InterruptedException ignored) {

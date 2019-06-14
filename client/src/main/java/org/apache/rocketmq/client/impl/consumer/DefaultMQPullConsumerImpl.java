@@ -171,12 +171,14 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
             throw new MQClientException("maxNums <= 0", null);
         }
 
+        // 自动订阅该MessageQueue下的所有消息
         this.subscriptionAutomatically(mq.getTopic());
 
         int sysFlag = PullSysFlag.buildSysFlag(false, block, true, false);
 
         SubscriptionData subscriptionData;
         try {
+            // 构建subscriptionData
             subscriptionData = FilterAPI.buildSubscriptionData(this.defaultMQPullConsumer.getConsumerGroup(),
                 mq.getTopic(), subExpression);
         } catch (Exception e) {
@@ -185,6 +187,7 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
 
         long timeoutMillis = block ? this.defaultMQPullConsumer.getConsumerTimeoutMillisWhenSuspend() : timeout;
 
+        // 执行消息拉取
         PullResult pullResult = this.pullAPIWrapper.pullKernelImpl(
             mq,
             subscriptionData.getSubString(),
@@ -198,6 +201,7 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
             CommunicationMode.SYNC,
             null
         );
+        // 对拉取结果进行过滤处理
         this.pullAPIWrapper.processPullResult(mq, pullResult, subscriptionData);
         if (!this.consumeMessageHookList.isEmpty()) {
             ConsumeMessageContext consumeMessageContext = null;
@@ -214,9 +218,14 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
         return pullResult;
     }
 
+    /**
+     * 自动订阅
+     * @param topic
+     */
     public void subscriptionAutomatically(final String topic) {
         if (!this.rebalanceImpl.getSubscriptionInner().containsKey(topic)) {
             try {
+                // 自动订阅该队列下所有的消息
                 SubscriptionData subscriptionData = FilterAPI.buildSubscriptionData(this.defaultMQPullConsumer.getConsumerGroup(),
                     topic, SubscriptionData.SUB_ALL);
                 this.rebalanceImpl.subscriptionInner.putIfAbsent(topic, subscriptionData);
@@ -294,6 +303,9 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
         return result;
     }
 
+    /**
+     * 进行负载均衡
+     */
     @Override
     public void doRebalance() {
         if (this.rebalanceImpl != null) {
@@ -533,27 +545,32 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
         switch (this.serviceState) {
             case CREATE_JUST:
                 this.serviceState = ServiceState.START_FAILED;
-
+                // 检查参数配置
                 this.checkConfig();
 
+                // 根据注册的主题，构建订阅信息，放入到RebalanceImpl的订阅表中。DefaultMQPullConsumerImpl可以注册多个主题，但是多个主题使用同一个消息处理监听器
                 this.copySubscription();
 
                 if (this.defaultMQPullConsumer.getMessageModel() == MessageModel.CLUSTERING) {
                     this.defaultMQPullConsumer.changeInstanceNameToPID();
                 }
 
+                // 创建MQClientInstance，每一个clientConfig一个MQClientInstance对象
                 this.mQClientFactory = MQClientManager.getInstance().getAndCreateMQClientInstance(this.defaultMQPullConsumer, this.rpcHook);
 
+                // 填充rebalanceImpl对象的消费组，消费队列分配器、消费模式
                 this.rebalanceImpl.setConsumerGroup(this.defaultMQPullConsumer.getConsumerGroup());
                 this.rebalanceImpl.setMessageModel(this.defaultMQPullConsumer.getMessageModel());
                 this.rebalanceImpl.setAllocateMessageQueueStrategy(this.defaultMQPullConsumer.getAllocateMessageQueueStrategy());
                 this.rebalanceImpl.setmQClientFactory(this.mQClientFactory);
 
+                // 构建PullAPIWrapper对象，该对象封装了具体拉消息的逻辑，Pull、push模式最终都会调用PullAPIWrapper类的方法从BrokerController拉消息
                 this.pullAPIWrapper = new PullAPIWrapper(
                     mQClientFactory,
                     this.defaultMQPullConsumer.getConsumerGroup(), isUnitMode());
                 this.pullAPIWrapper.registerFilterMessageHook(filterMessageHookList);
 
+                // 根据集群消费模式初始化消费进度管理器OffsetStore
                 if (this.defaultMQPullConsumer.getOffsetStore() != null) {
                     this.offsetStore = this.defaultMQPullConsumer.getOffsetStore();
                 } else {
@@ -573,6 +590,7 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
                 // 加载offset信息
                 this.offsetStore.load();
 
+                // 注册消费者到MQClientInstance消费者列表中
                 boolean registerOK = mQClientFactory.registerConsumer(this.defaultMQPullConsumer.getConsumerGroup(), this);
                 if (!registerOK) {
                     this.serviceState = ServiceState.CREATE_JUST;
@@ -582,6 +600,7 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
                         null);
                 }
 
+                // 启动MQClientInstance
                 mQClientFactory.start();
                 log.info("the consumer [{}] start OK", this.defaultMQPullConsumer.getConsumerGroup());
                 this.serviceState = ServiceState.RUNNING;

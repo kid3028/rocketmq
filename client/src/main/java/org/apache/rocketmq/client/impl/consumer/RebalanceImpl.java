@@ -222,7 +222,7 @@ public abstract class RebalanceImpl {
      * @param isOrder
      */
     public void doRebalance(final boolean isOrder) {
-        // 获取该consumer的订阅消息
+        // 获取该consumer的订阅消息 Map<topic, SubscriptionData>
         Map<String, SubscriptionData> subTable = this.getSubscriptionInner();
         if (subTable != null) {
             for (final Map.Entry<String, SubscriptionData> entry : subTable.entrySet()) {
@@ -254,6 +254,7 @@ public abstract class RebalanceImpl {
     private void rebalanceByTopic(final String topic, final boolean isOrder) {
         switch (messageModel) {
             case BROADCASTING: {
+                // Map<topic, MessageQueue>
                 Set<MessageQueue> mqSet = this.topicSubscribeInfoTable.get(topic);
                 if (mqSet != null) {
                     boolean changed = this.updateProcessQueueTableInRebalance(topic, mqSet, isOrder);
@@ -271,7 +272,7 @@ public abstract class RebalanceImpl {
                 break;
             }
             case CLUSTERING: {
-                // 1.从路由信息中获取topic对应所有的queue
+                // 1.从路由信息中获取topic对应所有的queue Map<topic, MessageQueue>
                 Set<MessageQueue> mqSet = this.topicSubscribeInfoTable.get(topic);
                 // 从broker获取所有同一个group的所有consumer id，该消费组的消费者id列表
                 List<String> cidAll = this.mQClientFactory.findConsumerIdList(topic, consumerGroup);

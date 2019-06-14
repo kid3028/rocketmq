@@ -40,6 +40,13 @@ public class RebalanceService extends ServiceThread {
         this.mqClientFactory = mqClientFactory;
     }
 
+    /**
+     * 默认每20s进行一次消息队列重新负载，判断消息队列是否需要进行重新负载，
+     * 如果消费者个数和主题的队列数没有发送变化，则继续保持原样。
+     * 对于Pull模型，如果消费者监听某些主题队列发生事件，注册消息队列变更事件方法，则RebalanceService会将消息队列负载变化
+     * 事件通知消费者。pull模式根据消息队列拉消息的方法，与Push模式走的逻辑相同，唯一的区别就是pull模式需要应用程序触发消息
+     * 拉取动作。
+     */
     @Override
     public void run() {
         log.info(this.getServiceName() + " service started");

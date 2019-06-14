@@ -16,14 +16,28 @@
  */
 package org.apache.rocketmq.client.consumer;
 
-import java.util.Set;
 import org.apache.rocketmq.client.exception.MQBrokerException;
 import org.apache.rocketmq.client.exception.MQClientException;
 import org.apache.rocketmq.common.message.MessageExt;
 import org.apache.rocketmq.common.message.MessageQueue;
 import org.apache.rocketmq.remoting.exception.RemotingException;
 
+import java.util.Set;
+
 /**
+ * 拉模式下，所有的pull方法，都是直接针对消息消费队列的，push模式可以认为是基于订阅与发布模式，而pull模式可以说是基于消息队列模式
+ *
+ * pull模式根据主题注册消息监听器，这里的消息监听器，不是用来消息消费的，而是在主题队列负载发生了变化时，做通知。
+ *
+ * 对比Push模式：
+ *   1.消息拉取机制：PullMessageService线程，根据PullRequest拉去任务循环拉取
+ *   2.消息队列负载机制，按照消费组，对主题下的消息队列，结合当前消费组内消费者数量动态负载
+ *
+ * Push模式：消费者订阅主题，然后自动进行集群内消息队列的动态负载均衡，自动拉取消息，准实时
+ * Pull模式：消费者不需要订阅主题，由业务方(应用程序)直接根据messagequeue拉取消息
+ *
+ * 建议使用push模式
+ *
  * Pulling consumer interface
  */
 public interface MQPullConsumer extends MQConsumer {

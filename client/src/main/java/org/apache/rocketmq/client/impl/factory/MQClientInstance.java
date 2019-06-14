@@ -246,6 +246,7 @@ public class MQClientInstance {
                     this.startScheduledTask();
                     //////////////////////////////////
                     // producer和consumer是共用MQClientInstance实现的，这里的初始化是consumer使用的
+                    // pullMessageService的执行并不会影响到pull模式下的主动拉消息，具体原因见pullMessageService#run方法
                     // Start pull service
                     this.pullMessageService.start();
                     // Start rebalance service
@@ -930,6 +931,12 @@ public class MQClientInstance {
         }
     }
 
+    /**
+     * 注册消费者到MQClientInstance消费者列表上
+     * @param group
+     * @param consumer
+     * @return
+     */
     public boolean registerConsumer(final String group, final MQConsumerInner consumer) {
         if (null == group || null == consumer) {
             return false;
@@ -1180,7 +1187,14 @@ public class MQClientInstance {
         return 0;
     }
 
+    /**
+     * 获取topic下某个消费组中的所有消费者
+     * @param topic
+     * @param group
+     * @return
+     */
     public List<String> findConsumerIdList(final String topic, final String group) {
+        // 根据topic获取到随机一个brokerAddr
         String brokerAddr = this.findBrokerAddrByTopic(topic);
         if (null == brokerAddr) {
             this.updateTopicRouteInfoFromNameServer(topic);
@@ -1204,8 +1218,10 @@ public class MQClientInstance {
      * @return
      */
     public String findBrokerAddrByTopic(final String topic) {
+        // Map<topic, TopicRouteData>
         TopicRouteData topicRouteData = this.topicRouteTable.get(topic);
         if (topicRouteData != null) {
+            // 获取到该topic下Broker列表
             List<BrokerData> brokers = topicRouteData.getBrokerDatas();
             if (!brokers.isEmpty()) {
                 int index = random.nextInt(brokers.size());

@@ -80,6 +80,10 @@ public class RebalancePullImpl extends RebalanceImpl {
         return 0;
     }
 
+    /**
+     * 空实现
+     * @param pullRequestList
+     */
     @Override
     public void dispatchPullRequest(List<PullRequest> pullRequestList) {
     }
