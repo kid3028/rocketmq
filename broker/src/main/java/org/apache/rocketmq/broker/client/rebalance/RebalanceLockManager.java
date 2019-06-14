@@ -16,22 +16,33 @@
  */
 package org.apache.rocketmq.broker.client.rebalance;
 
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.common.message.MessageQueue;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
-import org.apache.rocketmq.common.constant.LoggerName;
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.logging.InternalLoggerFactory;
-import org.apache.rocketmq.common.message.MessageQueue;
 
+/**
+ * 消息消费的各个环节基本都是围绕消息消费队列(messageQueue)和消息处理队列(processQueue)展开的，
+ * 消息消费进度拉取，消息消费进度都要判断ProcessQueue的locked是否为true，locked为true的前提条件是消息消费者cid
+ * 向broker端发送锁定消息队列的请求并返回加锁成功。
+ *
+ * RebalacnceLockManager便是服务端加锁的处理类
+ *
+ */
 public class RebalanceLockManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.REBALANCE_LOCK_LOGGER_NAME);
+    // 锁最大存活时间，，默认60s
     private final static long REBALANCE_LOCK_MAX_LIVE_TIME = Long.parseLong(System.getProperty(
         "rocketmq.broker.rebalance.lockMaxLiveTime", "60000"));
     private final Lock lock = new ReentrantLock();
+    // 消息消费队列锁容器，按消费组分组。不同的消费组同一个消费队列可以同时加锁，同一个消费组内同一个消费队列只允许一个消费者加锁成功
     private final ConcurrentMap<String/* group */, ConcurrentHashMap<MessageQueue, LockEntry>> mqLockTable =
         new ConcurrentHashMap<String, ConcurrentHashMap<MessageQueue, LockEntry>>(1024);
 
@@ -114,6 +125,13 @@ public class RebalanceLockManager {
         return false;
     }
 
+    /**
+     * 申请对mqs消息消费队列集合加锁
+     * @param group 消费组
+     * @param mqs 待加锁的消息消费队列集合
+     * @param clientId 消息消费者
+     * @return 返回成功加锁的消息队列集合
+     */
     public Set<MessageQueue> tryLockBatch(final String group, final Set<MessageQueue> mqs,
         final String clientId) {
         Set<MessageQueue> lockedMqs = new HashSet<MessageQueue>(mqs.size());
@@ -189,6 +207,12 @@ public class RebalanceLockManager {
         return lockedMqs;
     }
 
+    /**
+     * 对消息队列集合解锁
+     * @param group 消息消费组名
+     * @param mqs 待解锁的消息消费队列集合
+     * @param clientId 当前消息队列锁拥有者
+     */
     public void unlockBatch(final String group, final Set<MessageQueue> mqs, final String clientId) {
         try {
             this.lock.lockInterruptibly();

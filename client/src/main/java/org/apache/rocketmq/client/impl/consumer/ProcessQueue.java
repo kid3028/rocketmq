@@ -292,13 +292,20 @@ public class ProcessQueue {
      */
     public long commit() {
         try {
+            // 申请lockTreeMap写锁
             this.lockTreeMap.writeLock().lockInterruptibly();
             try {
+                /**
+                 * 获取consumingMsgOrderlyTreeMap中最大的消息偏移量offset
+                 * consumingMsgOrderlyTreeMap中存放的时本批消费的消息。
+                 * 然后更新msgCount、msgSize
+                 */
                 Long offset = this.consumingMsgOrderlyTreeMap.lastKey();
                 msgCount.addAndGet(0 - this.consumingMsgOrderlyTreeMap.size());
                 for (MessageExt msg : this.consumingMsgOrderlyTreeMap.values()) {
                     msgSize.addAndGet(0 - msg.getBody().length);
                 }
+                // 清除consumingMsgOrderlyTreeMap
                 this.consumingMsgOrderlyTreeMap.clear();
                 if (offset != null) {
                     return offset + 1;
@@ -313,6 +320,10 @@ public class ProcessQueue {
         return -1;
     }
 
+    /**
+     * 顺序消费中，如果一条消息消费失败，将其从consumingMsgOrderlyTreeMap中移除，重新放回到msgTreeMap
+     * @param msgs
+     */
     public void makeMessageToCosumeAgain(List<MessageExt> msgs) {
         try {
             this.lockTreeMap.writeLock().lockInterruptibly();
@@ -331,6 +342,7 @@ public class ProcessQueue {
 
     /**
      * 从processorQueue获取一批消息
+     * 顺序消费时，从ProcessQueue中取出的消息，会临时存储在{@link ProcessQueue#consumingMsgOrderlyTreeMap}中
      * @param batchSize
      * @return
      */

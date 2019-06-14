@@ -42,14 +42,22 @@ import java.util.concurrent.*;
 
 public class ConsumeMessageOrderlyService implements ConsumeMessageService {
     private static final InternalLogger log = ClientLogger.getLog();
+    // 消费任务一次运行的最大时间，可以通过rocketmq.client.maxTimeConsumeContinuously设置，默认60s
     private final static long MAX_TIME_CONSUME_CONTINUOUSLY =
         Long.parseLong(System.getProperty("rocketmq.client.maxTimeConsumeContinuously", "60000"));
+    // 消息消费者实现类
     private final DefaultMQPushConsumerImpl defaultMQPushConsumerImpl;
+    // 默认消息消费者
     private final DefaultMQPushConsumer defaultMQPushConsumer;
+    // 顺序消息消费监听器
     private final MessageListenerOrderly messageListener;
+    // 消息消费任务
     private final BlockingQueue<Runnable> consumeRequestQueue;
+    // 消息消费线程池
     private final ThreadPoolExecutor consumeExecutor;
+    // 消息消费组
     private final String consumerGroup;
+    // 消息消费队列锁
     private final MessageQueueLock messageQueueLock = new MessageQueueLock();
     private final ScheduledExecutorService scheduledExecutorService;
     private volatile boolean stopped = false;
@@ -61,8 +69,10 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
 
         this.defaultMQPushConsumer = this.defaultMQPushConsumerImpl.getDefaultMQPushConsumer();
         this.consumerGroup = this.defaultMQPushConsumer.getConsumerGroup();
+        // 创建任务拉取队列， LinkedBlockingQueue--> 无界队列
         this.consumeRequestQueue = new LinkedBlockingQueue<Runnable>();
 
+        // 创建消费者消费线程池
         this.consumeExecutor = new ThreadPoolExecutor(
             this.defaultMQPushConsumer.getConsumeThreadMin(),
             this.defaultMQPushConsumer.getConsumeThreadMax(),
@@ -71,13 +81,14 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
             this.consumeRequestQueue,
             new ThreadFactoryImpl("ConsumeMessageThread_"));
 
+        // 创建调度线程池，调度定时任务，延迟消费等
         this.scheduledExecutorService = Executors.newSingleThreadScheduledExecutor(new ThreadFactoryImpl("ConsumeMessageScheduledThread_"));
     }
 
     /**
      * 定时检查锁定状态
      * consumer会周期性的发送lock queue的命令给broker。对于顺序消息，必须同一个queue的消息只有一个consumer来处理，所以为了保障这一点，
-     * consumer会在锁定queue成功之后才开始消费，并且会一致更新这个锁。在这里broker起到了一个分布式锁的作用。consumer在获取锁之后会
+     * consumer会在锁定queue成功之后才开始消费，并且会一直更新这个锁。在这里broker起到了一个分布式锁的作用。consumer在获取锁之后会
      * 默认每20就刷新一下锁，broker如果发送锁超过1分钟没有刷新，则会自动释放，这个时候其他consumer就可以抢到这个锁。
      */
     public void start() {
@@ -218,6 +229,9 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
         }
     }
 
+    /**
+     * 周期性地向broker发送lock
+     */
     public synchronized void lockMQPeriodically() {
         if (!this.stopped) {
             this.defaultMQPushConsumerImpl.getRebalanceImpl().lockAll();
@@ -247,6 +261,15 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
         return false;
     }
 
+    /**
+     * 消息消费重试，先将该批消息重新放入到ProcessQueue的msgTreeMap，然后清除consumingMsgOrderlyTreeMap，
+     * 默认延时1s再加入到消费队列中，并结束本次消费,{@link DefaultMQPushConsumer#setSuspendCurrentQueueTimeMillis}
+     * 设置当前队列重试挂起时间。
+     *
+     * @param processQueue
+     * @param messageQueue
+     * @param suspendTimeMillis
+     */
     private void submitConsumeRequestLater(
         final ProcessQueue processQueue,
         final MessageQueue messageQueue,
@@ -295,7 +318,7 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                     log.warn("the message queue consume result is illegal, we think you want to ack these message {}",
                         consumeRequest.getMessageQueue());
                 case SUCCESS:
-                    // 如果成功，则调用ProcessorQueue的commit方法
+                    // 如果成功，则调用ProcessorQueue的commit方法，并返回待更新的消息消费进度
                     commitOffset = consumeRequest.getProcessQueue().commit();
                     // 记录消息成功吞吐量
                     this.getConsumerStatsManager().incConsumeOKTPS(consumerGroup, consumeRequest.getMessageQueue().getTopic(), msgs.size());
@@ -312,6 +335,7 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                             consumeRequest.getMessageQueue(),
                             context.getSuspendCurrentQueueTimeMillis());
                         continueConsume = false;
+                        // 如果执行消息重试，因为消息消费进度并没有向前推进，故本次视为无效消费，将不更新消费进度
                     } else {
                         commitOffset = consumeRequest.getProcessQueue().commit();
                     }
@@ -429,7 +453,9 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
     }
 
     class ConsumeRequest implements Runnable {
+        // 消息处理队列
         private final ProcessQueue processQueue;
+        // 消息队列
         private final MessageQueue messageQueue;
 
         public ConsumeRequest(ProcessQueue processQueue, MessageQueue messageQueue) {
@@ -447,20 +473,38 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
 
         @Override
         public void run() {
+            // 如果消息队列状态dropped为true，则停止本次消息消费
             if (this.processQueue.isDropped()) {
                 log.warn("run, the message queue not be able to consume, because it's dropped. {}", this.messageQueue);
                 return;
             }
 
-            //  获取消息queue锁对象，加互斥锁，保证同一个MessageQueue同时只会有一个线程在处理消息
+            /**
+             * 获取MessageQueue对应的锁，在消费某一个消息消费队列时先加锁，意味者一个消费者内消费线程池中的线程并发度是
+             * 消息消费队列级别，同一个消费队列在同一个时刻只会被一个线程消费，其他线程排队消费
+             */
             final Object objLock = messageQueueLock.fetchLockObject(this.messageQueue);
             synchronized (objLock) {
-                // 集群模式，检查processorQueue的状态是否仍然是锁定的，只有持有queue的锁，才会处理消息。对于广播模式，锁不需要
+                /**
+                 * 集群模式，检查processorQueue的状态是否仍然是锁定的，只有持有queue的锁，才会处理消息。对于广播模式，锁不需要
+                 *
+                 * 如果时广播模式，直接进入消费，无需锁定处理队列。因为相互之间没有竞争，
+                 * 如果是集群模式，能够消费消息的前提条件就是必须ProcessQueue被锁定并且锁未超时。
+                 *
+                 * 可能情况考虑：
+                 *  1.发生消息队列重新负载时，原先由自己处理的消息队列别另一个消费者分配，此时如果还未来得及将ProcessQueue解除锁定，
+                 *  就被另一个消费者添加进去，此时会产生多个消息消费者同时消费一个消息队列？？
+                 *  答案：否。因为当一个新的消费队列分配给消费者时，在添加其拉取任务之前必须先向brokerName发送对该消息队列加锁的请求，
+                 *  只有加锁成功，才能添加拉取消息，否则等到下一次负载后，该消费队列被原先占有的解锁之后，才能开始新的拉取任务。
+                 *  集群模式下，如果未锁定处理队列，则延迟该队列的消息消费。
+                 *
+                 */
                 if (MessageModel.BROADCASTING.equals(ConsumeMessageOrderlyService.this.defaultMQPushConsumerImpl.messageModel())
                     || (this.processQueue.isLocked() && !this.processQueue.isLockExpired())) {
                     // 记录开始时间
                     final long beginTime = System.currentTimeMillis();
                     for (boolean continueConsume = true; continueConsume; ) {
+                        // 如果消息消费队列被丢弃，则直接结束本次消息消费
                         if (this.processQueue.isDropped()) {
                             log.warn("the message queue not be able to consume, because it's dropped. {}", this.messageQueue);
                             break;
@@ -490,8 +534,13 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                             ConsumeMessageOrderlyService.this.submitConsumeRequestLater(processQueue, messageQueue, 10);
                             break;
                         }
-                        // 从ProcessQueue中获取消息进行消费，获取出来的消息也就有序的，consumer保证了消费的有序性
-                        // mq从发送消息、broker存储消息到consumer消费消息整个过程中，环环相扣，最终保证了消息是有序的。
+                        /**
+                         * 每次从处理队列中按顺序取出consumeMessageBatchSize(默认1条)条消息，如果没有取到消息，设置continueConsume为false，
+                         * 本次消费任务结束
+                         *
+                         * 从ProcessQueue中获取消息进行消费，获取出来的消息也就有序的，consumer保证了消费的有序性
+                         * mq从发送消息、broker存储消息到consumer消费消息整个过程中，环环相扣，最终保证了消息是有序的。
+                         */
                         final int consumeBatchSize =
                             ConsumeMessageOrderlyService.this.defaultMQPushConsumer.getConsumeMessageBatchMaxSize();
 
@@ -528,7 +577,7 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                                     break;
                                 }
 
-                                // 调用用户自定的Listener处理消息
+                                // 调用用户自定义的Listener处理消息
                                 status = messageListener.consumeMessage(Collections.unmodifiableList(msgs), context);
                             } catch (Throwable e) {
                                 log.warn("consumeMessage exception: {} Group: {} Msgs: {} MQ: {}",
@@ -574,6 +623,7 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                                 status = ConsumeOrderlyStatus.SUSPEND_CURRENT_QUEUE_A_MOMENT;
                             }
 
+                            // 执行消息消费钩子函数
                             if (ConsumeMessageOrderlyService.this.defaultMQPushConsumerImpl.hasHook()) {
                                 consumeMessageContext.setStatus(status.toString());
                                 consumeMessageContext

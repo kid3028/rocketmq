@@ -32,6 +32,7 @@ public enum ConsumeOrderlyStatus {
     @Deprecated
     COMMIT,
     /**
+     * 顺序消息不会向brokerName重新发回，将会在consumer延迟一段时间后继续重试
      * Suspend current queue a moment
      */
     SUSPEND_CURRENT_QUEUE_A_MOMENT;

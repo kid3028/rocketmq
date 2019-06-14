@@ -263,7 +263,9 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                 }
                 return;
             }
-        } else {
+        }
+        // 顺序消费
+        else {
             if (processQueue.isLocked()) {
                 if (!pullRequest.isLockedFirst()) {
                     final long offset = this.rebalanceImpl.computePullFromWhere(pullRequest.getMessageQueue());
@@ -278,7 +280,12 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                     pullRequest.setLockedFirst(true);
                     pullRequest.setNextOffset(offset);
                 }
-            } else {
+            }
+            /**
+             * 如果处理队列未被锁定，则延迟拉取消息，也就是说消息消费需要在ProcessQueue队列被自己锁定的情况下才会拉取消息，
+             * 否则将PullRequest延迟3s在拉取，并且PullRequest的初始拉取点在拉取时只在第一次拉取时设置
+             */
+            else {
                 this.executePullRequestLater(pullRequest, PULL_TIME_DELAY_MILLS_WHEN_EXCEPTION);
                 log.info("pull message later because not locked in broker, {}", pullRequest);
                 return;

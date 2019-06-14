@@ -166,6 +166,11 @@ public abstract class RebalanceImpl {
     }
 
     public void lockAll() {
+        /**
+         * 根据当前负载的消息队列，按照broker分类存储存储在Map，负载的消息队列在RebalanceService时根据当前消费者数量与
+         * 消息消费队列按照负载算法进行分配，然后尝试对该消息队列加锁，如果申请锁成功，则加入到待拉取任务中
+         */
+        // Map<brokerName, Set<MessageQueue>>
         HashMap<String, Set<MessageQueue>> brokerMqs = this.buildProcessQueueTableByBrokerName();
 
         Iterator<Entry<String, Set<MessageQueue>>> it = brokerMqs.entrySet().iterator();
@@ -177,6 +182,7 @@ public abstract class RebalanceImpl {
             if (mqs.isEmpty())
                 continue;
 
+            // 尝试获取brokerName中主节点的地址
             FindBrokerResult findBrokerResult = this.mQClientFactory.findBrokerAddressInSubscribe(brokerName, MixAll.MASTER_ID, true);
             if (findBrokerResult != null) {
                 LockBatchRequestBody requestBody = new LockBatchRequestBody();
@@ -185,12 +191,15 @@ public abstract class RebalanceImpl {
                 requestBody.setMqSet(mqs);
 
                 try {
+                    // 向brokerName发送锁定消息队列请求，该方法会返回本次成功锁定的消息消费队列
                     Set<MessageQueue> lockOKMQSet =
                         this.mQClientFactory.getMQClientAPIImpl().lockBatchMQ(findBrokerResult.getBrokerAddr(), requestBody, 1000);
 
+                    // 遍历本次成功锁定的队列来更新对应的ProcessQueue的lock状态，如果
                     for (MessageQueue mq : lockOKMQSet) {
                         ProcessQueue processQueue = this.processQueueTable.get(mq);
                         if (processQueue != null) {
+                            // 如果locked为false，则设置成true，并更新锁定时间
                             if (!processQueue.isLocked()) {
                                 log.info("the message queue locked OK, Group: {} {}", this.consumerGroup, mq);
                             }
@@ -199,6 +208,7 @@ public abstract class RebalanceImpl {
                             processQueue.setLastLockTimestamp(System.currentTimeMillis());
                         }
                     }
+                    // 遍历mqs，如果消息队列未成功锁定，需要将ProcessQueue的lock的修改为false，在该处队列未被其他消费者锁定之前，该消息队列将会暂停拉消息
                     for (MessageQueue mq : mqs) {
                         if (!lockOKMQSet.contains(mq)) {
                             ProcessQueue processQueue = this.processQueueTable.get(mq);
@@ -420,6 +430,11 @@ public abstract class RebalanceImpl {
         for (MessageQueue mq : mqSet) {
             // 如果是新加入的queue
             if (!this.processQueueTable.containsKey(mq)) {
+                /**
+                 * 顺序消息时，添加该消息队列的拉取任务之前，首先要尝试锁定消费者(消费者+CID)，不同消费组可以同时锁定同一个消息消费队列，
+                 * 集群模式下，同一个mq在同一个消费组内只能被一个一个消费者锁定，如果锁定成功，则添加到拉取任务中，如果锁定失败，说明虽然
+                 * 发送了消息队列重新负载，但是该消息队列还未被释放，本次负载周期不会进行消息拉取
+                 */
                 if (isOrder && !this.lock(mq)) {
                     log.warn("doRebalance, {}, add a new mq failed, {}, because lock failed", consumerGroup, mq);
                     continue;
