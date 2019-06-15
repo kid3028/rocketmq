@@ -193,12 +193,15 @@ public class UtilAll {
             if (!file.exists())
                 return -1;
 
+            // 获取commitLog所在磁盘分区总的存储容量
             long totalSpace = file.getTotalSpace();
 
             if (totalSpace > 0) {
+                // 获取commitlog所在磁盘文件剩余容量
                 long freeSpace = file.getFreeSpace();
                 long usedSpace = totalSpace - freeSpace;
 
+                // 当前分区的物理磁盘使用率
                 return usedSpace / (double) totalSpace;
             }
         } catch (Exception e) {

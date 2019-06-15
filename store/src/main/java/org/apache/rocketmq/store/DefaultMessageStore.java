@@ -1398,6 +1398,12 @@ public class DefaultMessageStore implements MessageStore {
         log.info(fileName + (result ? " create OK" : " already exists"));
     }
 
+    /**
+     * 设置定时任务
+     *   1.定时清理过期的CommitLog、ConsumeQueue和IndexFile数据文件，默认文件写满后会保存72小时
+     *   2.定时自检commitLog和ConsumeQueue文件，校验文件是否完整。主要用于监控，不会做修复文件的动作
+     *   3.定时检查commitLog的lock时长(因为在write或者flush时候会lock)，如果lock的时间过长，则打印JVM堆栈，用于监控
+     */
     private void addScheduleTask() {
 
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
@@ -1443,6 +1449,18 @@ public class DefaultMessageStore implements MessageStore {
         // }, 1, 1, TimeUnit.HOURS);
     }
 
+    /**
+     * 每10s执行一次，检测是否需要清除过期文件，执行频率可以通过设置cleanResourceInterval，默认10s
+     *
+     * 由于RocketMQ操作commitLog、ConsumeQueue文件，都是基于内存映射方法并在启动的时候，
+     * 会加载commitlog、consumequeue目录下所有文件，为了避免内存与磁盘的浪费，不消可能将
+     * 消息永久存储在消息服务器上，所以需要一种机制来删除过期的文件。RocketMQ顺序写commitlog、
+     * consumequeue文件，所有写操作全部落在最后一个commitlog或者 consumequeue文件上，
+     * 之前的文件在下一个文件创建后，将不会再被更新，RocketMQ清除过期文件的办法是：
+     * 如果非当前写文件在一定时间间隔内没有再次被更新，则认为文件过期，可以删除，
+     * RocketMQ不会管这个文件上的消息是否全部消费，默认每个文件的过期时间是72小时。
+     * 通过在broker配置文件中设置fileReserveTime可以改变过期时间
+     */
     private void cleanFilesPeriodically() {
         this.cleanCommitLogService.run();
         this.cleanConsumeQueueService.run();
@@ -1719,9 +1737,11 @@ public class DefaultMessageStore implements MessageStore {
     class CleanCommitLogService {
 
         private final static int MAX_MANUAL_DELETE_FILE_TIMES = 20;
+        // 如果磁盘分区使用率超过了该阈值，将设置磁盘不可写，此时会拒绝新消息写入
         private final double diskSpaceWarningLevelRatio =
             Double.parseDouble(System.getProperty("rocketmq.broker.diskSpaceWarningLevelRatio", "0.90"));
 
+        // 如果磁盘分区使用超过了该阈值，建议立即执行过期文件删除，但不会拒绝新消息的写入
         private final double diskSpaceCleanForciblyRatio =
             Double.parseDouble(System.getProperty("rocketmq.broker.diskSpaceCleanForciblyRatio", "0.85"));
         private long lastRedeleteTimestamp = 0;
@@ -1737,8 +1757,9 @@ public class DefaultMessageStore implements MessageStore {
 
         public void run() {
             try {
+                // 尝试删除过期文件
                 this.deleteExpiredFiles();
-
+                // 重试删除被hang的文件(由于被其他线程引用在第一阶段未删除的文件)
                 this.redeleteHangedFile();
             } catch (Throwable e) {
                 DefaultMessageStore.log.warn(this.getServiceName() + " service has exception. ", e);
@@ -1747,12 +1768,23 @@ public class DefaultMessageStore implements MessageStore {
 
         private void deleteExpiredFiles() {
             int deleteCount = 0;
+            // 文件保留时间，也就是从最后一次更新时间到现在，如果超过了该时间，则认为文件过期，可以删除
             long fileReservedTime = DefaultMessageStore.this.getMessageStoreConfig().getFileReservedTime();
+            // 删除物理文件的间隔，因为在一次清除过程中，可能需需要删除的文件不止一个，该值指定两次删除文件的间隔时间
             int deletePhysicFilesInterval = DefaultMessageStore.this.getMessageStoreConfig().getDeleteCommitLogFilesInterval();
+            /**
+             * 在清除过期文件时，如果该文件被其他线程占用(引用次数大于0.比如读取消息)，此时会阻止此次删除任务。
+             * 同时在第一次视图删除该文件时记录当前时间戳，destroyMappedFileIntervalForcibly第一次拒绝删除
+             * 之后能保留的最大时间，在此时间内，同样可以被拒绝删除，同样会将引用减少1000个，超过该时间间隔后，
+             * 文件将会被强制删除
+             */
             int destroyMapedFileIntervalForcibly = DefaultMessageStore.this.getMessageStoreConfig().getDestroyMapedFileIntervalForcibly();
 
+            // 是否到了删除时间点 默认凌晨4点
             boolean timeup = this.isTimeToDelete();
+            // 判断磁盘空间是否充足，如果不充足，返回true，表示应该触发过期文件删除操作
             boolean spacefull = this.isSpaceToDelete();
+            // 预留，手动触发，可以通过调用executeDeleteFilesManualy方法触发过期文件删除
             boolean manualDelete = this.manualDeleteFileSeveralTimes > 0;
 
             if (timeup || spacefull || manualDelete) {
@@ -1806,13 +1838,19 @@ public class DefaultMessageStore implements MessageStore {
             return false;
         }
 
+        /**
+         * 磁盘占用率是否已经达到了删除阈值
+         * @return
+         */
         private boolean isSpaceToDelete() {
+            // 获取maxUsedSpaceRatio，表示commitlog、consumequeue文件所在磁盘分区的最大使用量，如果超过该值，则需要立即清除过期文件
             double ratio = DefaultMessageStore.this.getMessageStoreConfig().getDiskMaxUsedSpaceRatio() / 100.0;
 
             cleanImmediately = false;
 
             {
                 String storePathPhysic = DefaultMessageStore.this.getMessageStoreConfig().getStorePathCommitLog();
+                // 计算当前commitlog文件所在磁盘分区磁盘使用率
                 double physicRatio = UtilAll.getDiskPartitionSpaceUsedPercent(storePathPhysic);
                 if (physicRatio > diskSpaceWarningLevelRatio) {
                     boolean diskok = DefaultMessageStore.this.runningFlags.getAndMakeDiskFull();
