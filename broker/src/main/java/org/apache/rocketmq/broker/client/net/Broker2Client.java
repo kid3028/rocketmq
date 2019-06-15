@@ -59,6 +59,14 @@ public class Broker2Client {
         this.brokerController = brokerController;
     }
 
+    /**
+     * 向producer发起事务状态检查
+     * @param group
+     * @param channel
+     * @param requestHeader
+     * @param messageExt
+     * @throws Exception
+     */
     public void checkProducerTransactionState(
         final String group,
         final Channel channel,

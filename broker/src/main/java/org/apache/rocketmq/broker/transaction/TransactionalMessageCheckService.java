@@ -24,6 +24,9 @@ import org.apache.rocketmq.logging.InternalLoggerFactory;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * 事务消息回查服务
+ */
 public class TransactionalMessageCheckService extends ServiceThread {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.TRANSACTION_LOGGER_NAME);
 
@@ -60,6 +63,7 @@ public class TransactionalMessageCheckService extends ServiceThread {
     @Override
     public void run() {
         log.info("Start transaction check service thread!");
+        // 每个60s进行一次回查
         long checkInterval = brokerController.getBrokerConfig().getTransactionCheckInterval();
         while (!this.isStopped()) {
             this.waitForRunning(checkInterval);
@@ -69,7 +73,15 @@ public class TransactionalMessageCheckService extends ServiceThread {
 
     @Override
     protected void onWaitEnd() {
+        /**
+         * 3s 从broker配置文件中获取transactionTimeout参数值，表示事务的过期时间，
+         * 一个消息的存储时间+该值 > 系统当前时间，才会对该消息执行事务状态回查
+         */
         long timeout = brokerController.getBrokerConfig().getTransactionTimeOut();
+        /**
+         *  5次 从broker配置文件中获取transactionCheckMax参数值，表示事务的最大检测
+         *  次数，如果超过了检测次数，消息会默认被丢弃
+         */
         int checkMax = brokerController.getBrokerConfig().getTransactionCheckMax();
         long begin = System.currentTimeMillis();
         log.info("Begin to check prepare message, begin time:{}", begin);

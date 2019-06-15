@@ -92,6 +92,10 @@ public class EndTransactionRequestHeader implements CommandCustomHeader {
         this.commitOrRollback = commitOrRollback;
     }
 
+    /**
+     * 是否是broker回查
+     * @return
+     */
     public Boolean getFromTransactionCheck() {
         return fromTransactionCheck;
     }

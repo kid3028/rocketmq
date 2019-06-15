@@ -813,6 +813,7 @@ public class MQClientInstance {
         byte[] classBody = null;
         int classCRC = 0;
         try {
+            // 将代码转换为字节数值
             classBody = filterClassSource.getBytes(MixAll.DEFAULT_CHARSET);
             classCRC = UtilAll.crc32(classBody);
         } catch (Exception e1) {
@@ -823,7 +824,7 @@ public class MQClientInstance {
 
         // 获取到Topic下的TopicRouteData   Map<topic, TopicRouteData>
         TopicRouteData topicRouteData = this.topicRouteTable.get(topic);
-        // TopicRouteData不为空
+        // TopicRouteData不为空，如果路由信息中filterServerTable不为空，则通过网络将className，class内容注册到FilterServer中
         if (topicRouteData != null
             && topicRouteData.getFilterServerTable() != null && !topicRouteData.getFilterServerTable().isEmpty()) {
             Iterator<Entry<String, List<String>>> it = topicRouteData.getFilterServerTable().entrySet().iterator();
@@ -832,7 +833,7 @@ public class MQClientInstance {
                 List<String> value = next.getValue();
                 for (final String fsAddr : value) {
                     try {
-                        // 上传过滤文件
+                        // 上传过滤文件，向路由信息中宝行的filterServer服务器注册过滤类，该方法主要是构建RequestCode.REGISTER_MESSAGE_FILTER_CLASS消息发送给filterServer，具体的距离逻辑在FilterServer端
                         this.mQClientAPIImpl.registerMessageFilterClass(fsAddr, consumerGroup, topic, fullClassName, classCRC, classBody,
                             5000);
 

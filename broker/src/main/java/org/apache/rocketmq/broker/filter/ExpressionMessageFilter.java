@@ -155,8 +155,10 @@ public class ExpressionMessageFilter implements MessageFilter {
             tempProperties = MessageDecoder.decodeProperties(msgBuffer);
         }
 
+        // 开始匹配
         Object ret = null;
         try {
+            // 上下文环境为消息体中的属性，如果匹配，则返回true，否则返回false
             MessageEvaluationContext context = new MessageEvaluationContext(tempProperties);
 
             // 评估值

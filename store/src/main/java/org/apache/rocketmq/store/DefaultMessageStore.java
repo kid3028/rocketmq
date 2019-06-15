@@ -805,12 +805,19 @@ public class DefaultMessageStore implements MessageStore {
         return 0;
     }
 
+    /**
+     * 根据commitLogOffset查找消息
+     * @param commitLogOffset physical offset.
+     * @return
+     */
     public MessageExt lookMessageByOffset(long commitLogOffset) {
+        // 读取出commitLogOffset这个位置的消息长度
         SelectMappedBufferResult sbr = this.commitLog.getMessage(commitLogOffset, 4);
         if (null != sbr) {
             try {
                 // 1 TOTALSIZE
                 int size = sbr.getByteBuffer().getInt();
+                // 读取到一个完整的消息
                 return lookMessageByOffset(commitLogOffset, size);
             } finally {
                 sbr.release();

@@ -240,8 +240,9 @@ public class PullAPIWrapper {
             requestHeader.setExpressionType(expressionType);
 
             String brokerAddr = findBrokerResult.getBrokerAddr();
+            // 如果使用了类过滤消息模式，将会改变拉取地址为FilterServer地址
             if (PullSysFlag.hasClassFilterFlag(sysFlagInner)) {
-                // 根据brokerAddress和topic确定消息过滤服务器
+                // 根据brokerAddress和topic确定消息过滤服务器，此处已经将broker地址替换为filterServer地址
                 brokerAddr = computPullFromWhichFilterServer(mq.getTopic(), brokerAddr);
             }
 

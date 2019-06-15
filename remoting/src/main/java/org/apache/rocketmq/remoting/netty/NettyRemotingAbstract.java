@@ -434,6 +434,7 @@ public abstract class NettyRemotingAbstract {
             /**
              * 该方法调用了CountDownLatch的await方法。
              * 等待timeoutMillis时间后，从responseFuture获取返回结果，如果没有结果的话就返回null
+             * {@link ResponseFuture#putResponse(RemotingCommand)}中调用countDown
              */
             RemotingCommand responseCommand = responseFuture.waitResponse(timeoutMillis);
             if (null == responseCommand) {

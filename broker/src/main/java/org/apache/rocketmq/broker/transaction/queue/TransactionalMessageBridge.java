@@ -71,15 +71,26 @@ public class TransactionalMessageBridge {
 
     }
 
+    /**
+     * 获取指定mq消费进度
+     * @param mq
+     * @return
+     */
     public long fetchConsumeOffset(MessageQueue mq) {
         long offset = brokerController.getConsumerOffsetManager().queryOffset(TransactionalMessageUtil.buildConsumerGroup(),
             mq.getTopic(), mq.getQueueId());
         if (offset == -1) {
+            // 如果offset为-1，获取最小的offset
             offset = store.getMinOffsetInQueue(mq.getTopic(), mq.getQueueId());
         }
         return offset;
     }
 
+    /**
+     * 获取topic下消息队列
+     * @param topic
+     * @return
+     */
     public Set<MessageQueue> fetchMessageQueues(String topic) {
         Set<MessageQueue> mqSet = new HashSet<>();
         TopicConfig topicConfig = selectTopicConfig(topic);
@@ -197,8 +208,8 @@ public class TransactionalMessageBridge {
 
     /**
      * 对事务消息进行转换
-     * 在将消息存储到MessageStore之前，会将原始的topic和queueId放入自定属性中，然后将sysFlag，设置成非事务消息，
-     * topic统一改成RMQ_SYS_HALF_TOPIC，queueId设置为0.这样所有的Prepare消息都会发送同一个的同一个queue下面。
+     * 在将消息存储到MessageStore之前，会将原始的topic和queueId放入自定义属性中，然后将sysFlag，设置成非事务消息，
+     * topic统一改成RMQ_SYS_HALF_TOPIC，queueId设置为0.这样所有的Prepare消息都会发送同一个topic的同一个queue下面。
      * 而且因为这个topic是系统内置的，consumer不会订阅这个topic的消息，所以prepare的消息不会被订阅这个topic的消息，
      * 所以prepare的消息不会被consumer消费。
      * @param msgInner
@@ -219,6 +230,12 @@ public class TransactionalMessageBridge {
         return msgInner;
     }
 
+    /**
+     * 将事务消息加入OP队列
+     * @param messageExt
+     * @param opType
+     * @return
+     */
     public boolean putOpMessage(MessageExt messageExt, String opType) {
         // 选择和prepare消息相同的queueId
         MessageQueue messageQueue = new MessageQueue(messageExt.getTopic(),
@@ -298,7 +315,13 @@ public class TransactionalMessageBridge {
         return msgInner;
     }
 
+    /**
+     * 获取topic配置信息
+     * @param topic
+     * @return
+     */
     private TopicConfig selectTopicConfig(String topic) {
+        // Map<topic, TopicConfig>
         TopicConfig topicConfig = brokerController.getTopicConfigManager().selectTopicConfig(topic);
         if (topicConfig == null) {
             topicConfig = this.brokerController.getTopicConfigManager().createTopicInSendMessageBackMethod(
@@ -308,6 +331,7 @@ public class TransactionalMessageBridge {
     }
 
     /**
+     * 将事务消息放入OP队列
      * Use this function while transaction msg is committed or rollback write a flag 'd' to operation queue for the
      * msg's offset
      *
@@ -348,6 +372,11 @@ public class TransactionalMessageBridge {
         return opQueue;
     }
 
+    /**
+     * 根据commitLogOffset查找消息
+     * @param commitLogOffset
+     * @return
+     */
     public MessageExt lookMessageByOffset(final long commitLogOffset) {
         return this.store.lookMessageByOffset(commitLogOffset);
     }

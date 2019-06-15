@@ -19,10 +19,13 @@ package org.apache.rocketmq.broker.transaction;
 import org.apache.rocketmq.common.message.MessageExt;
 
 public class OperationResult {
+    // prepare消息对象
     private MessageExt prepareMessage;
 
+    // 查找结果
     private int responseCode;
 
+    // 错误提示
     private String responseRemark;
 
     public MessageExt getPrepareMessage() {

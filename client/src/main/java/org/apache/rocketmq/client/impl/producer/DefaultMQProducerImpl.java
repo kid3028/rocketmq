@@ -285,6 +285,12 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         return null;
     }
 
+    /**
+     * 处理broker发来的事务消息回查
+     * @param addr
+     * @param msg
+     * @param header
+     */
     @Override
     public void checkTransactionState(final String addr, final MessageExt msg,
         final CheckTransactionStateRequestHeader header) {
@@ -301,6 +307,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                     LocalTransactionState localTransactionState = LocalTransactionState.UNKNOW;
                     Throwable exception = null;
                     try {
+                        // 回查事务状态
                         localTransactionState = transactionCheckListener.checkLocalTransaction(message);
                     } catch (Throwable e) {
                         log.error("Broker call checkTransactionState, but checkLocalTransactionState exception", e);
@@ -316,6 +323,12 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                 }
             }
 
+            /**
+             * 处理事务结果
+             * @param localTransactionState
+             * @param producerGroup
+             * @param exception
+             */
             private void processTransactionState(
                 final LocalTransactionState localTransactionState,
                 final String producerGroup,
@@ -1259,9 +1272,9 @@ public class DefaultMQProducerImpl implements MQProducerInner {
      *     topic，tag的hashCode，消息对应的CommitLog的物理offset，offset表示数据结构是第几个）
      *     2.broker在构造ConsumeQueue的时候会判断是否是prepare或者rollback消息，如果是这两种中的一种则不会将该消息放入ConsumeQueue，consumer在拉取消息的时候也就不会
      *     拉取到prepare和rollback的消息
-     * @param msg
-     * @param tranExecuter
-     * @param arg
+     * @param msg 消息
+     * @param tranExecuter 事务监听器
+     * @param arg 附加参数，该参数在TransactionListener回调函数中原值传入
      * @return
      * @throws MQClientException
      */
@@ -1374,6 +1387,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
             id = MessageDecoder.decodeMessageId(sendResult.getMsgId());
         }
         String transactionId = sendResult.getTransactionId();
+        // 根据brokerName找到一个master
         final String brokerAddr = this.mQClientFactory.findBrokerAddressInPublish(sendResult.getMessageQueue().getBrokerName());
         EndTransactionRequestHeader requestHeader = new EndTransactionRequestHeader();
         // 需要把transactionId和offset发送给broker，便于broker查找half消息
