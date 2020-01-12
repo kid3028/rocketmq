@@ -224,11 +224,22 @@ public class RouteInfoManager {
         return result;
     }
 
+    /**
+     * 判断broker的配置信息是否发生了变化，比较broker上传过来的dataVersion
+     * @param brokerAddr
+     * @param dataVersion
+     * @return
+     */
     public boolean isBrokerTopicConfigChanged(final String brokerAddr, final DataVersion dataVersion) {
         DataVersion prev = queryBrokerTopicConfig(brokerAddr);
         return null == prev || !prev.equals(dataVersion);
     }
 
+    /**
+     * 根据broker地址获取broker的版本信息
+     * @param brokerAddr
+     * @return
+     */
     public DataVersion queryBrokerTopicConfig(final String brokerAddr) {
         BrokerLiveInfo prev = this.brokerLiveTable.get(brokerAddr);
         if (prev != null) {

@@ -46,6 +46,9 @@ public class SlaveSynchronize {
         this.masterAddr = masterAddr;
     }
 
+    /**
+     * 同步元数据
+     */
     public void syncAll() {
         this.syncTopicConfig(); // 同步topic配置信息
         this.syncConsumerOffset(); // 同步消费者偏移量
@@ -53,20 +56,29 @@ public class SlaveSynchronize {
         this.syncSubscriptionGroupConfig(); // 同步订阅组配置信息
     }
 
+    /**
+     * 同步topic信息
+     */
     private void syncTopicConfig() {
         String masterAddrBak = this.masterAddr;
         if (masterAddrBak != null) {
             try {
+                // 获取mastertopic配置信息
                 TopicConfigSerializeWrapper topicWrapper =
                     this.brokerController.getBrokerOuterAPI().getAllTopicConfig(masterAddrBak);
+                // 比较dataVersion
                 if (!this.brokerController.getTopicConfigManager().getDataVersion()
                     .equals(topicWrapper.getDataVersion())) {
 
+                    // 更新版本号，时间戳
                     this.brokerController.getTopicConfigManager().getDataVersion()
                         .assignNewOne(topicWrapper.getDataVersion());
+                    // 清空topic配置
                     this.brokerController.getTopicConfigManager().getTopicConfigTable().clear();
+                    // 更新topic配置为master获取的topic配置
                     this.brokerController.getTopicConfigManager().getTopicConfigTable()
                         .putAll(topicWrapper.getTopicConfigTable());
+                    // 持久化topic配置
                     this.brokerController.getTopicConfigManager().persist();
 
                     log.info("Update slave topic config from master, {}", masterAddrBak);
@@ -77,14 +89,20 @@ public class SlaveSynchronize {
         }
     }
 
+    /**
+     * 同步consumerOffset
+     */
     private void syncConsumerOffset() {
         String masterAddrBak = this.masterAddr;
         if (masterAddrBak != null) {
             try {
+                // 获取master的consumeroffset
                 ConsumerOffsetSerializeWrapper offsetWrapper =
                     this.brokerController.getBrokerOuterAPI().getAllConsumerOffset(masterAddrBak);
+                // 更新consumerOffset Map<topic@group, Map<queueId, offset>>
                 this.brokerController.getConsumerOffsetManager().getOffsetTable()
                     .putAll(offsetWrapper.getOffsetTable());
+                // 持久化消息进度
                 this.brokerController.getConsumerOffsetManager().persist();
                 log.info("Update slave consumer offset from master, {}", masterAddrBak);
             } catch (Exception e) {
@@ -93,18 +111,24 @@ public class SlaveSynchronize {
         }
     }
 
+    /**
+     * 同步延时队列offset
+     */
     private void syncDelayOffset() {
         String masterAddrBak = this.masterAddr;
         if (masterAddrBak != null) {
             try {
+                // 向master获取延时队列的offset
                 String delayOffset =
                     this.brokerController.getBrokerOuterAPI().getAllDelayOffset(masterAddrBak);
                 if (delayOffset != null) {
 
+                    // offset存储位置 delayOffset.json
                     String fileName =
                         StorePathConfigHelper.getDelayOffsetStorePath(this.brokerController
                             .getMessageStoreConfig().getStorePathRootDir());
                     try {
+                        // 持久化到文件
                         MixAll.string2File(delayOffset, fileName);
                     } catch (IOException e) {
                         log.error("Persist file Exception, {}", fileName, e);
@@ -117,23 +141,32 @@ public class SlaveSynchronize {
         }
     }
 
+    /**
+     * 向master同步订阅数据
+     */
     private void syncSubscriptionGroupConfig() {
         String masterAddrBak = this.masterAddr;
         if (masterAddrBak != null) {
             try {
+                // 获取master上订阅数据
                 SubscriptionGroupWrapper subscriptionWrapper =
                     this.brokerController.getBrokerOuterAPI()
                         .getAllSubscriptionGroupConfig(masterAddrBak);
 
+                // 如果订阅数据发生了变化
                 if (!this.brokerController.getSubscriptionGroupManager().getDataVersion()
                     .equals(subscriptionWrapper.getDataVersion())) {
+                    // 更新订阅数据
                     SubscriptionGroupManager subscriptionGroupManager =
                         this.brokerController.getSubscriptionGroupManager();
+                    // 更新版本号
                     subscriptionGroupManager.getDataVersion().assignNewOne(
                         subscriptionWrapper.getDataVersion());
+                    // 更新订阅
                     subscriptionGroupManager.getSubscriptionGroupTable().clear();
                     subscriptionGroupManager.getSubscriptionGroupTable().putAll(
                         subscriptionWrapper.getSubscriptionGroupTable());
+                    // 持久化订阅数据
                     subscriptionGroupManager.persist();
                     log.info("Update slave Subscription Group from master, {}", masterAddrBak);
                 }

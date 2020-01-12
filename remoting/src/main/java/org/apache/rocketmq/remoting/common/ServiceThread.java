@@ -21,6 +21,7 @@ import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
 
 /**
+ * 后台线程父类
  * Base class for background thread
  */
 public abstract class ServiceThread implements Runnable {

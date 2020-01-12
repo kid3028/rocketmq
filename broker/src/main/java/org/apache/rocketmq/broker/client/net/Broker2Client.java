@@ -88,6 +88,11 @@ public class Broker2Client {
         return this.brokerController.getRemotingServer().invokeSync(channel, request, 10000);
     }
 
+    /**
+     * 通知consumer组consumer数量发生了变化
+     * @param channel
+     * @param consumerGroup
+     */
     public void notifyConsumerIdsChanged(
         final Channel channel,
         final String consumerGroup) {
@@ -112,10 +117,20 @@ public class Broker2Client {
         return resetOffset(topic, group, timeStamp, isForce, false);
     }
 
+    /**
+     * 设置topic@group 的offset
+     * @param topic
+     * @param group
+     * @param timeStamp
+     * @param isForce
+     * @param isC
+     * @return
+     */
     public RemotingCommand resetOffset(String topic, String group, long timeStamp, boolean isForce,
                                        boolean isC) {
         final RemotingCommand response = RemotingCommand.createResponseCommand(null);
 
+        // 获取topic配置
         TopicConfig topicConfig = this.brokerController.getTopicConfigManager().selectTopicConfig(topic);
         if (null == topicConfig) {
             log.error("[reset-offset] reset offset failed, no topic in this broker. topic={}", topic);
@@ -127,13 +142,16 @@ public class Broker2Client {
         Map<MessageQueue, Long> offsetTable = new HashMap<MessageQueue, Long>();
 
         for (int i = 0; i < topicConfig.getWriteQueueNums(); i++) {
+            // 创建等量写队列
             MessageQueue mq = new MessageQueue();
             mq.setBrokerName(this.brokerController.getBrokerConfig().getBrokerName());
             mq.setTopic(topic);
             mq.setQueueId(i);
 
+            // 查询目前topic@group下第i个队列的消费进度
             long consumerOffset =
                 this.brokerController.getConsumerOffsetManager().queryOffset(group, topic, i);
+            // 消费进度不正确
             if (-1 == consumerOffset) {
                 response.setCode(ResponseCode.SYSTEM_ERROR);
                 response.setRemark(String.format("THe consumer group <%s> not exist", group));
@@ -141,18 +159,25 @@ public class Broker2Client {
             }
 
             long timeStampOffset;
+            // 获取查询时间点的队列的偏移量
+            // 查询时间不正确，当前队列最大consumequeue偏移量
             if (timeStamp == -1) {
-
+                // 当前队列最大consumequeue偏移量
                 timeStampOffset = this.brokerController.getMessageStore().getMaxOffsetInQueue(topic, i);
-            } else {
+            }
+            // 查询时间正确
+            else {
+                // 队列在指定时间地点的偏移量
                 timeStampOffset = this.brokerController.getMessageStore().getOffsetInQueueByTime(topic, i, timeStamp);
             }
 
+            // 如果获取的偏移量小于0，则设置为0
             if (timeStampOffset < 0) {
                 log.warn("reset offset is invalid. topic={}, queueId={}, timeStampOffset={}", topic, i, timeStampOffset);
                 timeStampOffset = 0;
             }
 
+            // 将mq --> offset 放入创建的Map
             if (isForce || timeStampOffset < consumerOffset) {
                 offsetTable.put(mq, timeStampOffset);
             } else {
@@ -166,6 +191,7 @@ public class Broker2Client {
         requestHeader.setTimestamp(timeStamp);
         RemotingCommand request =
             RemotingCommand.createRequestCommand(RequestCode.RESET_CONSUMER_CLIENT_OFFSET, requestHeader);
+        // 设置offsetTable信息
         if (isC) {
             // c++ language
             ResetOffsetBodyForC body = new ResetOffsetBodyForC();
@@ -179,6 +205,7 @@ public class Broker2Client {
             request.setBody(body.encode());
         }
 
+        // 获取group信息
         ConsumerGroupInfo consumerGroupInfo =
             this.brokerController.getConsumerManager().getConsumerGroupInfo(group);
 
@@ -186,6 +213,7 @@ public class Broker2Client {
             ConcurrentMap<Channel, ClientChannelInfo> channelInfoTable =
                 consumerGroupInfo.getChannelInfoTable();
             for (Map.Entry<Channel, ClientChannelInfo> entry : channelInfoTable.entrySet()) {
+                // 当前MQ的版本
                 int version = entry.getValue().getVersion();
                 if (version >= MQVersion.Version.V3_0_7_SNAPSHOT.ordinal()) {
                     try {
@@ -223,6 +251,11 @@ public class Broker2Client {
         return response;
     }
 
+    /**
+     * 将Map类型的offset表现形式转化为list
+     * @param table
+     * @return
+     */
     private List<MessageQueueForC> convertOffsetTable2OffsetList(Map<MessageQueue, Long> table) {
         List<MessageQueueForC> list = new ArrayList<>();
         for (Entry<MessageQueue, Long> entry : table.entrySet()) {

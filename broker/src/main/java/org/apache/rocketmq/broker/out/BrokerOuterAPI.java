@@ -17,13 +17,6 @@
 package org.apache.rocketmq.broker.out;
 
 import com.google.common.collect.Lists;
-import java.io.UnsupportedEncodingException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import org.apache.rocketmq.broker.latency.BrokerFixedThreadPoolExecutor;
 import org.apache.rocketmq.client.exception.MQBrokerException;
 import org.apache.rocketmq.common.DataVersion;
@@ -31,32 +24,28 @@ import org.apache.rocketmq.common.MixAll;
 import org.apache.rocketmq.common.ThreadFactoryImpl;
 import org.apache.rocketmq.common.UtilAll;
 import org.apache.rocketmq.common.constant.LoggerName;
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.common.namesrv.RegisterBrokerResult;
 import org.apache.rocketmq.common.namesrv.TopAddressing;
 import org.apache.rocketmq.common.protocol.RequestCode;
 import org.apache.rocketmq.common.protocol.ResponseCode;
-import org.apache.rocketmq.common.protocol.body.ConsumerOffsetSerializeWrapper;
-import org.apache.rocketmq.common.protocol.body.KVTable;
-import org.apache.rocketmq.common.protocol.body.RegisterBrokerBody;
-import org.apache.rocketmq.common.protocol.body.SubscriptionGroupWrapper;
-import org.apache.rocketmq.common.protocol.body.TopicConfigSerializeWrapper;
-import org.apache.rocketmq.common.protocol.header.namesrv.QueryDataVersionRequestHeader;
-import org.apache.rocketmq.common.protocol.header.namesrv.QueryDataVersionResponseHeader;
-import org.apache.rocketmq.common.protocol.header.namesrv.RegisterBrokerRequestHeader;
-import org.apache.rocketmq.common.protocol.header.namesrv.RegisterBrokerResponseHeader;
-import org.apache.rocketmq.common.protocol.header.namesrv.UnRegisterBrokerRequestHeader;
+import org.apache.rocketmq.common.protocol.body.*;
+import org.apache.rocketmq.common.protocol.header.namesrv.*;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.remoting.RPCHook;
 import org.apache.rocketmq.remoting.RemotingClient;
-import org.apache.rocketmq.remoting.exception.RemotingCommandException;
-import org.apache.rocketmq.remoting.exception.RemotingConnectException;
-import org.apache.rocketmq.remoting.exception.RemotingSendRequestException;
-import org.apache.rocketmq.remoting.exception.RemotingTimeoutException;
-import org.apache.rocketmq.remoting.exception.RemotingTooMuchRequestException;
+import org.apache.rocketmq.remoting.exception.*;
 import org.apache.rocketmq.remoting.netty.NettyClientConfig;
 import org.apache.rocketmq.remoting.netty.NettyRemotingClient;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+
+import java.io.UnsupportedEncodingException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public class BrokerOuterAPI {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
@@ -84,12 +73,19 @@ public class BrokerOuterAPI {
         this.brokerOuterExecutor.shutdown();
     }
 
+    /**
+     * 从远程服务器拉取NameServer配置列表
+     * @return
+     */
     public String fetchNameServerAddr() {
         try {
+            // 获取NameServer地址列表
             String addrs = this.topAddressing.fetchNSAddr();
             if (addrs != null) {
+                // 远程Nameserv地址与本地缓存不同
                 if (!addrs.equals(this.nameSrvAddr)) {
                     log.info("name server address changed, old: {} new: {}", this.nameSrvAddr, addrs);
+                    // 更新本地缓存
                     this.updateNameServerAddressList(addrs);
                     this.nameSrvAddr = addrs;
                     return nameSrvAddr;
@@ -101,6 +97,11 @@ public class BrokerOuterAPI {
         return nameSrvAddr;
     }
 
+    /**
+     * 更新NameServerAddr
+     *  192.168.0.1:9876;192.168.0.2:9876
+     * @param addrs
+     */
     public void updateNameServerAddressList(final String addrs) {
         List<String> lst = new ArrayList<String>();
         String[] addrArray = addrs.split(";");
@@ -108,9 +109,24 @@ public class BrokerOuterAPI {
             lst.add(addr);
         }
 
+        // 更新NameServerAddr
         this.remotingClient.updateNameServerAddressList(lst);
     }
 
+    /**
+     * 向所有namesrv注册自己
+     * @param clusterName
+     * @param brokerAddr
+     * @param brokerName
+     * @param brokerId
+     * @param haServerAddr
+     * @param topicConfigWrapper
+     * @param filterServerList
+     * @param oneway
+     * @param timeoutMills
+     * @param compressed
+     * @return
+     */
     public List<RegisterBrokerResult> registerBrokerAll(
         final String clusterName,
         final String brokerAddr,
@@ -142,11 +158,14 @@ public class BrokerOuterAPI {
             final int bodyCrc32 = UtilAll.crc32(body);
             requestHeader.setBodyCrc32(bodyCrc32);
             final CountDownLatch countDownLatch = new CountDownLatch(nameServerAddressList.size());
+            // 向每一个namesrv注册自己(broker)
             for (final String namesrvAddr : nameServerAddressList) {
+                // 异步执行
                 brokerOuterExecutor.execute(new Runnable() {
                     @Override
                     public void run() {
                         try {
+                            // 向namesrv发起注册
                             RegisterBrokerResult result = registerBroker(namesrvAddr,oneway, timeoutMills,requestHeader,body);
                             if (result != null) {
                                 registerBrokerResultList.add(result);
@@ -156,6 +175,7 @@ public class BrokerOuterAPI {
                         } catch (Exception e) {
                             log.warn("registerBroker Exception, {}", namesrvAddr, e);
                         } finally {
+                            // 注册完一个countDown一次
                             countDownLatch.countDown();
                         }
                     }
@@ -163,6 +183,7 @@ public class BrokerOuterAPI {
             }
 
             try {
+                // 阻塞等待注册执行结果返回
                 countDownLatch.await(timeoutMills, TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
             }
@@ -171,6 +192,21 @@ public class BrokerOuterAPI {
         return registerBrokerResultList;
     }
 
+    /**
+     * 向NameServer注册broker
+     * @param namesrvAddr
+     * @param oneway
+     * @param timeoutMills
+     * @param requestHeader
+     * @param body
+     * @return
+     * @throws RemotingCommandException
+     * @throws MQBrokerException
+     * @throws RemotingConnectException
+     * @throws RemotingSendRequestException
+     * @throws RemotingTimeoutException
+     * @throws InterruptedException
+     */
     private RegisterBrokerResult registerBroker(
         final String namesrvAddr,
         final boolean oneway,
@@ -212,6 +248,13 @@ public class BrokerOuterAPI {
         throw new MQBrokerException(response.getCode(), response.getRemark());
     }
 
+    /**
+     * 向broker发起注销
+     * @param clusterName
+     * @param brokerAddr
+     * @param brokerName
+     * @param brokerId
+     */
     public void unregisterBrokerAll(
         final String clusterName,
         final String brokerAddr,
@@ -220,6 +263,7 @@ public class BrokerOuterAPI {
     ) {
         List<String> nameServerAddressList = this.remotingClient.getNameServerAddressList();
         if (nameServerAddressList != null) {
+            // 向所有NameServer发起注销
             for (String namesrvAddr : nameServerAddressList) {
                 try {
                     this.unregisterBroker(namesrvAddr, clusterName, brokerAddr, brokerName, brokerId);
@@ -231,6 +275,19 @@ public class BrokerOuterAPI {
         }
     }
 
+    /**
+     * 向NameServer发起注销
+     * @param namesrvAddr
+     * @param clusterName
+     * @param brokerAddr
+     * @param brokerName
+     * @param brokerId
+     * @throws RemotingConnectException
+     * @throws RemotingSendRequestException
+     * @throws RemotingTimeoutException
+     * @throws InterruptedException
+     * @throws MQBrokerException
+     */
     public void unregisterBroker(
         final String namesrvAddr,
         final String clusterName,
@@ -258,6 +315,16 @@ public class BrokerOuterAPI {
         throw new MQBrokerException(response.getCode(), response.getRemark());
     }
 
+    /**
+     * 是否需要向NameServer发起注册
+     * @param clusterName
+     * @param brokerAddr
+     * @param brokerName
+     * @param brokerId
+     * @param topicConfigWrapper
+     * @param timeoutMills
+     * @return
+     */
     public List<Boolean> needRegister(
         final String clusterName,
         final String brokerAddr,
@@ -274,6 +341,7 @@ public class BrokerOuterAPI {
                     @Override
                     public void run() {
                         try {
+                            // 查询broker在nameServer的版本
                             QueryDataVersionRequestHeader requestHeader = new QueryDataVersionRequestHeader();
                             requestHeader.setBrokerAddr(brokerAddr);
                             requestHeader.setBrokerId(brokerId);
@@ -292,10 +360,12 @@ public class BrokerOuterAPI {
                                     byte[] body = response.getBody();
                                     if (body != null) {
                                         nameServerDataVersion = DataVersion.decode(body, DataVersion.class);
+                                        // 如果broker本地的版本与NameServer传递回来的版本不一致，则说明版本发生了变化
                                         if (!topicConfigWrapper.getDataVersion().equals(nameServerDataVersion)) {
                                             changed = true;
                                         }
                                     }
+                                    // 添加版本发生变化的标记
                                     if (changed == null || changed) {
                                         changedList.add(Boolean.TRUE);
                                     }
@@ -323,6 +393,16 @@ public class BrokerOuterAPI {
         return changedList;
     }
 
+    /**
+     * 获取master上所有topic信息
+     * @param addr
+     * @return
+     * @throws RemotingConnectException
+     * @throws RemotingSendRequestException
+     * @throws RemotingTimeoutException
+     * @throws InterruptedException
+     * @throws MQBrokerException
+     */
     public TopicConfigSerializeWrapper getAllTopicConfig(
         final String addr) throws RemotingConnectException, RemotingSendRequestException,
         RemotingTimeoutException, InterruptedException, MQBrokerException {
@@ -341,6 +421,16 @@ public class BrokerOuterAPI {
         throw new MQBrokerException(response.getCode(), response.getRemark());
     }
 
+    /**
+     * 获取master的consumerOffset
+     * @param addr
+     * @return
+     * @throws InterruptedException
+     * @throws RemotingTimeoutException
+     * @throws RemotingSendRequestException
+     * @throws RemotingConnectException
+     * @throws MQBrokerException
+     */
     public ConsumerOffsetSerializeWrapper getAllConsumerOffset(
         final String addr) throws InterruptedException, RemotingTimeoutException,
         RemotingSendRequestException, RemotingConnectException, MQBrokerException {

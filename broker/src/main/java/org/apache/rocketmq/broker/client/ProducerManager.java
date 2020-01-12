@@ -25,15 +25,17 @@ import org.apache.rocketmq.remoting.common.RemotingHelper;
 import org.apache.rocketmq.remoting.common.RemotingUtil;
 
 import java.util.*;
-import java.util.Map.Entry;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class ProducerManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
+    // 锁超时30s
     private static final long LOCK_TIMEOUT_MILLIS = 3000;
+    // channel过期120s
     private static final long CHANNEL_EXPIRED_TIMEOUT = 1000 * 120;
+    // 重试3次
     private static final int GET_AVALIABLE_CHANNEL_RETRY_COUNT = 3;
     private final Lock groupChannelLock = new ReentrantLock();
     private final HashMap<String /* group name */, HashMap<Channel, ClientChannelInfo>> groupChannelTable =
@@ -42,10 +44,15 @@ public class ProducerManager {
     public ProducerManager() {
     }
 
+    /**
+     * 获取producerGroupChannelTable
+     * @return
+     */
     public HashMap<String, HashMap<Channel, ClientChannelInfo>> getGroupChannelTable() {
         HashMap<String /* group name */, HashMap<Channel, ClientChannelInfo>> newGroupChannelTable =
             new HashMap<String, HashMap<Channel, ClientChannelInfo>>();
         try {
+            // 上锁之后，直接将groupChannelTable放入一个新的集合返回
             if (this.groupChannelLock.tryLock(LOCK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
                 try {
                     newGroupChannelTable.putAll(groupChannelTable);
@@ -59,6 +66,9 @@ public class ProducerManager {
         return newGroupChannelTable;
     }
 
+    /**
+     * 扫描不活跃的channel，并关闭
+     */
     public void scanNotActiveChannel() {
         try {
             if (this.groupChannelLock.tryLock(LOCK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
@@ -68,13 +78,14 @@ public class ProducerManager {
                         final String group = entry.getKey();
                         final HashMap<Channel, ClientChannelInfo> chlMap = entry.getValue();
 
-                        Iterator<Entry<Channel, ClientChannelInfo>> it = chlMap.entrySet().iterator();
+                        Iterator<Map.Entry<Channel, ClientChannelInfo>> it = chlMap.entrySet().iterator();
                         while (it.hasNext()) {
-                            Entry<Channel, ClientChannelInfo> item = it.next();
+                            Map.Entry<Channel, ClientChannelInfo> item = it.next();
                             // final Integer id = item.getKey();
                             final ClientChannelInfo info = item.getValue();
-
+                            // 上次更新距离现在多久了
                             long diff = System.currentTimeMillis() - info.getLastUpdateTimestamp();
+                            // 已达到过期时间，关闭channel
                             if (diff > CHANNEL_EXPIRED_TIMEOUT) {
                                 it.remove();
                                 log.warn(
@@ -95,16 +106,23 @@ public class ProducerManager {
         }
     }
 
+    /**
+     * channel发送exception、idle、close时清除对应的channel
+     * @param remoteAddr
+     * @param channel
+     */
     public void doChannelCloseEvent(final String remoteAddr, final Channel channel) {
         if (channel != null) {
             try {
                 if (this.groupChannelLock.tryLock(LOCK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
                     try {
+                        // 遍历消费组  Map<groupName, Map<Channel, ClientChannelInfo>>
                         for (final Map.Entry<String, HashMap<Channel, ClientChannelInfo>> entry : this.groupChannelTable
                             .entrySet()) {
                             final String group = entry.getKey();
                             final HashMap<Channel, ClientChannelInfo> clientChannelInfoTable =
                                 entry.getValue();
+                            // 移除掉消息组中对应的channel
                             final ClientChannelInfo clientChannelInfo =
                                 clientChannelInfoTable.remove(channel);
                             if (clientChannelInfo != null) {
@@ -126,18 +144,25 @@ public class ProducerManager {
         }
     }
 
+    /**
+     * 注册producer
+     * @param group
+     * @param clientChannelInfo
+     */
     public void registerProducer(final String group, final ClientChannelInfo clientChannelInfo) {
         try {
             ClientChannelInfo clientChannelInfoFound = null;
 
             if (this.groupChannelLock.tryLock(LOCK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
                 try {
+                    // 检查是否有注册了channel，没有注册channel
                     HashMap<Channel, ClientChannelInfo> channelTable = this.groupChannelTable.get(group);
                     if (null == channelTable) {
                         channelTable = new HashMap<>();
                         this.groupChannelTable.put(group, channelTable);
                     }
 
+                    // 没有channel注册，将channel加入本地缓存注册
                     clientChannelInfoFound = channelTable.get(clientChannelInfo.getChannel());
                     if (null == clientChannelInfoFound) {
                         channelTable.put(clientChannelInfo.getChannel(), clientChannelInfo);
@@ -148,6 +173,7 @@ public class ProducerManager {
                     this.groupChannelLock.unlock();
                 }
 
+                // 更新channel时间
                 if (clientChannelInfoFound != null) {
                     clientChannelInfoFound.setLastUpdateTimestamp(System.currentTimeMillis());
                 }
@@ -159,10 +185,16 @@ public class ProducerManager {
         }
     }
 
+    /**
+     * 注销producer channel
+     * @param group
+     * @param clientChannelInfo
+     */
     public void unregisterProducer(final String group, final ClientChannelInfo clientChannelInfo) {
         try {
             if (this.groupChannelLock.tryLock(LOCK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
                 try {
+                    // 将channel从注册列表中移除
                     HashMap<Channel, ClientChannelInfo> channelTable = this.groupChannelTable.get(group);
                     if (null != channelTable && !channelTable.isEmpty()) {
                         ClientChannelInfo old = channelTable.remove(clientChannelInfo.getChannel());
@@ -171,6 +203,7 @@ public class ProducerManager {
                                 clientChannelInfo.toString());
                         }
 
+                        // 如果移除channel后该group下channel为空了，移除group的映射
                         if (channelTable.isEmpty()) {
                             this.groupChannelTable.remove(group);
                             log.info("unregister a producer group[{}] from groupChannelTable", group);
@@ -197,6 +230,7 @@ public class ProducerManager {
         HashMap<Channel, ClientChannelInfo> channelClientChannelInfoHashMap = groupChannelTable.get(groupId);
         List<Channel> channelList = new ArrayList<Channel>();
         if (channelClientChannelInfoHashMap != null) {
+            // 获取到channelList
             for (Channel channel : channelClientChannelInfoHashMap.keySet()) {
                 channelList.add(channel);
             }
@@ -206,14 +240,18 @@ public class ProducerManager {
                 return null;
             }
 
+            // 取模随机获取一个channel
             int index = positiveAtomicCounter.incrementAndGet() % size;
             Channel channel = channelList.get(index);
             int count = 0;
+            // 如果channel可用，返回channel，不可用则循环获取
             boolean isOk = channel.isActive() && channel.isWritable();
             while (count++ < GET_AVALIABLE_CHANNEL_RETRY_COUNT) {
+                // channel可用，直接返回该channel
                 if (isOk) {
                     return channel;
                 }
+                // channel不可用，获取下一个
                 index = (++index) % size;
                 channel = channelList.get(index);
                 isOk = channel.isActive() && channel.isWritable();

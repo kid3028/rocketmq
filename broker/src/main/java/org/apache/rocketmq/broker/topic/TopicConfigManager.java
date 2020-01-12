@@ -55,6 +55,10 @@ public class TopicConfigManager extends ConfigManager {
     public TopicConfigManager() {
     }
 
+    /**
+     * 初始化系统内存topic配置
+     * @param brokerController
+     */
     public TopicConfigManager(BrokerController brokerController) {
         this.brokerController = brokerController;
         {
@@ -143,6 +147,15 @@ public class TopicConfigManager extends ConfigManager {
         return this.topicConfigTable.get(topic);
     }
 
+    /**
+     * 当发送消息时如果broker不存在topic，broker自动创建topic
+     * @param topic
+     * @param defaultTopic
+     * @param remoteAddress
+     * @param clientDefaultTopicQueueNums
+     * @param topicSysFlag
+     * @return
+     */
     public TopicConfig createTopicInSendMessageMethod(final String topic, final String defaultTopic,
         final String remoteAddress, final int clientDefaultTopicQueueNums, final int topicSysFlag) {
         TopicConfig topicConfig = null;
@@ -151,13 +164,17 @@ public class TopicConfigManager extends ConfigManager {
         try {
             if (this.lockTopicConfigTable.tryLock(LOCK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
                 try {
+                    // 检查topicConfigTable中是否已经存在topic信息，如果存在则不需要再创建，直接返回
                     topicConfig = this.topicConfigTable.get(topic);
                     if (topicConfig != null)
                         return topicConfig;
 
+                    // 获取默认的topic
                     TopicConfig defaultTopicConfig = this.topicConfigTable.get(defaultTopic);
                     if (defaultTopicConfig != null) {
+                        // 默认topic等于系统默认创建topic  AUTO_CREATE_TOPIC_KEY
                         if (defaultTopic.equals(MixAll.AUTO_CREATE_TOPIC_KEY_TOPIC)) {
+                            // 如果broker不允许自动创建topic，那么设置topic权限为读写
                             if (!this.brokerController.getBrokerConfig().isAutoCreateTopicEnable()) {
                                 defaultTopicConfig.setPerm(PermName.PERM_READ | PermName.PERM_WRITE);
                             }
@@ -166,14 +183,17 @@ public class TopicConfigManager extends ConfigManager {
                         if (PermName.isInherited(defaultTopicConfig.getPerm())) {
                             topicConfig = new TopicConfig(topic);
 
+                            // 设置写队列数为clientDefaultTopicQueueNums与defaultTopicConfig.getWriteQueueNums()之间的较小值
                             int queueNums =
                                 clientDefaultTopicQueueNums > defaultTopicConfig.getWriteQueueNums() ? defaultTopicConfig
                                     .getWriteQueueNums() : clientDefaultTopicQueueNums;
 
+                            // queue队列数小于0，则设置为0
                             if (queueNums < 0) {
                                 queueNums = 0;
                             }
 
+                            // 设置读写队列数为queueNums
                             topicConfig.setReadQueueNums(queueNums);
                             topicConfig.setWriteQueueNums(queueNums);
                             int perm = defaultTopicConfig.getPerm();
@@ -185,11 +205,14 @@ public class TopicConfigManager extends ConfigManager {
                             log.warn("Create new topic failed, because the default topic[{}] has no perm [{}] producer:[{}]",
                                 defaultTopic, defaultTopicConfig.getPerm(), remoteAddress);
                         }
-                    } else {
+                    }
+                    // 默认topic不是 AUTO_CREATE_TOPIC_KEY
+                    else {
                         log.warn("Create new topic failed, because the default topic[{}] not exist. producer:[{}]",
                             defaultTopic, remoteAddress);
                     }
 
+                    // 保存topic配置到本地缓存，并持久化
                     if (topicConfig != null) {
                         log.info("Create new topic by default topic:[{}] config:[{}] producer:[{}]",
                             defaultTopic, topicConfig, remoteAddress);
@@ -200,6 +223,7 @@ public class TopicConfigManager extends ConfigManager {
 
                         createNew = true;
 
+                        // 持久化本地缓存
                         this.persist();
                     }
                 } finally {
@@ -210,6 +234,7 @@ public class TopicConfigManager extends ConfigManager {
             log.error("createTopicInSendMessageMethod exception", e);
         }
 
+        // 向NameServer发起注册  同步topic信息
         if (createNew) {
             this.brokerController.registerBrokerAll(false, true,true);
         }
@@ -218,7 +243,7 @@ public class TopicConfigManager extends ConfigManager {
     }
 
     /**
-     * 根据topic获取topic配置信息
+     * 当发送消息时如果broker不存在topic，broker自动创建topic
      * @param topic
      * @param clientDefaultTopicQueueNums
      * @param perm
@@ -230,7 +255,9 @@ public class TopicConfigManager extends ConfigManager {
         final int clientDefaultTopicQueueNums,
         final int perm,
         final int topicSysFlag) {
+        // 尝试从本地缓存获取topic
         TopicConfig topicConfig = this.topicConfigTable.get(topic);
+        // 已经有topic信息，直接返回
         if (topicConfig != null)
             return topicConfig;
 
@@ -243,6 +270,7 @@ public class TopicConfigManager extends ConfigManager {
                     if (topicConfig != null)
                         return topicConfig;
 
+                    // 构建topicConfig信息
                     topicConfig = new TopicConfig(topic);
                     topicConfig.setReadQueueNums(clientDefaultTopicQueueNums);
                     topicConfig.setWriteQueueNums(clientDefaultTopicQueueNums);
@@ -250,9 +278,11 @@ public class TopicConfigManager extends ConfigManager {
                     topicConfig.setTopicSysFlag(topicSysFlag);
 
                     log.info("create new topic {}", topicConfig);
+                    // 将topic配置加入本地缓存
                     this.topicConfigTable.put(topic, topicConfig);
                     createNew = true;
                     this.dataVersion.nextVersion();
+                    // 持久化
                     this.persist();
                 } finally {
                     this.lockTopicConfigTable.unlock();
@@ -262,6 +292,7 @@ public class TopicConfigManager extends ConfigManager {
             log.error("createTopicInSendMessageBackMethod exception", e);
         }
 
+        // 向NameServer发起注册  同步topic信息
         if (createNew) {
             this.brokerController.registerBrokerAll(false, true,true);
         }
@@ -312,6 +343,10 @@ public class TopicConfigManager extends ConfigManager {
         }
     }
 
+    /**
+     * 更新topic配置信息，不存在则创建
+     * @param topicConfig
+     */
     public void updateTopicConfig(final TopicConfig topicConfig) {
         TopicConfig old = this.topicConfigTable.put(topicConfig.getTopicName(), topicConfig);
         if (old != null) {
@@ -320,16 +355,26 @@ public class TopicConfigManager extends ConfigManager {
             log.info("create new topic [{}]", topicConfig);
         }
 
+        // 版本号+1
         this.dataVersion.nextVersion();
 
+        // 持久化
         this.persist();
     }
 
+    /**
+     * 更新topic配置  顺序topic
+     * @param orderKVTableFromNs
+     */
     public void updateOrderTopicConfig(final KVTable orderKVTableFromNs) {
 
+        /**
+         * orderKVTableFromNs不空
+         */
         if (orderKVTableFromNs != null && orderKVTableFromNs.getTable() != null) {
             boolean isChange = false;
             Set<String> orderTopics = orderKVTableFromNs.getTable().keySet();
+            // 如果topic存在，并且不是顺序topic，那么更新为顺序topic
             for (String topic : orderTopics) {
                 TopicConfig topicConfig = this.topicConfigTable.get(topic);
                 if (topicConfig != null && !topicConfig.isOrder()) {
@@ -367,10 +412,16 @@ public class TopicConfigManager extends ConfigManager {
         }
     }
 
+    /**
+     * 移除topic配置
+     * @param topic
+     */
     public void deleteTopicConfig(final String topic) {
+        // 删除topic配置
         TopicConfig old = this.topicConfigTable.remove(topic);
         if (old != null) {
             log.info("delete topic config OK, topic: {}", old);
+            // 版本号+1  持久化
             this.dataVersion.nextVersion();
             this.persist();
         } else {

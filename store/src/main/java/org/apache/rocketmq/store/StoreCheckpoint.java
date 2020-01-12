@@ -16,16 +16,17 @@
  */
 package org.apache.rocketmq.store;
 
+import org.apache.rocketmq.common.UtilAll;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileChannel.MapMode;
-import org.apache.rocketmq.common.UtilAll;
-import org.apache.rocketmq.common.constant.LoggerName;
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.logging.InternalLoggerFactory;
 
 public class StoreCheckpoint {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
@@ -41,14 +42,18 @@ public class StoreCheckpoint {
         MappedFile.ensureDirOK(file.getParent());
         boolean fileExists = file.exists();
 
+        // 读取checkpoint
         this.randomAccessFile = new RandomAccessFile(file, "rw");
         this.fileChannel = this.randomAccessFile.getChannel();
         this.mappedByteBuffer = fileChannel.map(MapMode.READ_WRITE, 0, MappedFile.OS_PAGE_SIZE);
 
         if (fileExists) {
             log.info("store checkpoint file exists, " + scpPath);
+            // 物理消息时间戳
             this.physicMsgTimestamp = this.mappedByteBuffer.getLong(0);
+            // 逻辑消息时间戳
             this.logicsMsgTimestamp = this.mappedByteBuffer.getLong(8);
+            // index时间戳
             this.indexMsgTimestamp = this.mappedByteBuffer.getLong(16);
 
             log.info("store checkpoint file physicMsgTimestamp " + this.physicMsgTimestamp + ", "
@@ -75,6 +80,9 @@ public class StoreCheckpoint {
         }
     }
 
+    /**
+     * 刷新checkPoint
+     */
     public void flush() {
         this.mappedByteBuffer.putLong(0, this.physicMsgTimestamp);
         this.mappedByteBuffer.putLong(8, this.logicsMsgTimestamp);

@@ -38,7 +38,7 @@ public class MessageStoreConfig {
     private int mapedFileSizeConsumeQueue = 300000 * ConsumeQueue.CQ_STORE_UNIT_SIZE;
     // enable consume queue ext
     /**
-     * 是否开启consumeQeueuExt，默认是false，就是输入消费端消费速度跟不上，是否创建一个扩展的ConsumeQueue文件，
+     * 是否开启consumeQeueuExt，默认是false，就是如果消费端消费速度跟不上，是否创建一个扩展的ConsumeQueue文件，
      * 如果不开启，可能阻塞从commitlog文件中获取消息，并且ConsumeQueue是按照topic独立的
      */
     private boolean enableConsumeQueueExt = false;
@@ -206,8 +206,12 @@ public class MessageStoreConfig {
         this.mapedFileSizeCommitLog = mapedFileSizeCommitLog;
     }
 
+    /**
+     * comsumequeue一个文件的大小 默认是600_0000w字节
+     * @return
+     */
     public int getMapedFileSizeConsumeQueue() {
-
+        // 600_0000w / 20 = 30_0000w
         int factor = (int) Math.ceil(this.mapedFileSizeConsumeQueue / (ConsumeQueue.CQ_STORE_UNIT_SIZE * 1.0));
         return (int) (factor * ConsumeQueue.CQ_STORE_UNIT_SIZE);
     }

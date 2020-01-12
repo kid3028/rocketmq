@@ -17,9 +17,6 @@
 package org.apache.rocketmq.broker.client;
 
 import io.netty.channel.Channel;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import org.apache.rocketmq.broker.BrokerController;
 import org.apache.rocketmq.common.ThreadFactoryImpl;
 import org.apache.rocketmq.common.constant.LoggerName;
@@ -27,6 +24,14 @@ import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.remoting.ChannelEventListener;
 
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Consumer连接事件处理
+ *   close、idle、exception
+ */
 public class ClientHousekeepingService implements ChannelEventListener {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     private final BrokerController brokerController;
@@ -38,6 +43,9 @@ public class ClientHousekeepingService implements ChannelEventListener {
         this.brokerController = brokerController;
     }
 
+    /**
+     * 开启定时任务，每个10s检查一下是否有异常连接Channel
+     */
     public void start() {
 
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {

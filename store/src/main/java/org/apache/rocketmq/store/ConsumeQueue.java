@@ -104,6 +104,10 @@ public class ConsumeQueue {
         }
     }
 
+    /**
+     * 加载consumequeue对应的mappedFile
+     * @return
+     */
     public boolean load() {
         boolean result = this.mappedFileQueue.load();
         log.info("load consume queue " + this.topic + "-" + this.queueId + " " + (result ? "OK" : "Failed"));
@@ -167,21 +171,25 @@ public class ConsumeQueue {
                         log.info("recover last consume queue file over, last mapped file "
                             + mappedFile.getFileName());
                         break;
-                    } else {
+                    }
+                    // 指向下一个
+                    else {
                         mappedFile = mappedFiles.get(index);
                         byteBuffer = mappedFile.sliceByteBuffer();
                         processOffset = mappedFile.getFileFromOffset();
                         mappedFileOffset = 0;
                         log.info("recover next consume queue file, " + mappedFile.getFileName());
                     }
-                } else {
+                }
+                // 该mappedFile校验不通过
+                else {
                     log.info("recover current consume queue queue over " + mappedFile.getFileName() + " "
                         + (processOffset + mappedFileOffset));
                     break;
                 }
             }
 
-            // 代表当前consumequeue有效的偏移量
+            // 代表当前consumequeue有效的偏移量，如果中途有文件校验失败，那么processOffset停留在最后一个校验成功的位置
             processOffset += mappedFileOffset;
             // 设置刷新位置、提交位置
             this.mappedFileQueue.setFlushedWhere(processOffset);
@@ -198,7 +206,13 @@ public class ConsumeQueue {
         }
     }
 
+    /**
+     * 获取consumequeue在指定时间点的consumequeue
+     * @param timestamp
+     * @return
+     */
     public long getOffsetInQueueByTime(final long timestamp) {
+        // 返回第一个最后修改时间大于timestamp的mappedFile，如果没有返回最后一个mappedFile
         MappedFile mappedFile = this.mappedFileQueue.getMappedFileByTime(timestamp);
         if (mappedFile != null) {
             long offset = 0;
@@ -367,6 +381,11 @@ public class ConsumeQueue {
         return lastOffset;
     }
 
+    /**
+     * 刷盘
+     * @param flushLeastPages
+     * @return
+     */
     public boolean flush(final int flushLeastPages) {
         boolean result = this.mappedFileQueue.flush(flushLeastPages);
         if (isExtReadEnable()) {
@@ -642,11 +661,16 @@ public class ConsumeQueue {
         return this.getMaxOffsetInQueue() - this.getMinOffsetInQueue();
     }
 
+    /**
+     * 获取当前consumequeue的最大偏移量
+     * @return
+     */
     public long getMaxOffsetInQueue() {
         return this.mappedFileQueue.getMaxOffset() / CQ_STORE_UNIT_SIZE;
     }
 
     public void checkSelf() {
+        // consumequeue自检
         mappedFileQueue.checkSelf();
         if (isExtReadEnable()) {
             this.consumeQueueExt.checkSelf();

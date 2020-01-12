@@ -48,12 +48,18 @@ public class IndexHeader {
      * +-------------------------+--------------------------+-------------------------------+--------------------------------+----------------------+------------------+
      */
     public void load() {
+        // 开始时间戳
         this.beginTimestamp.set(byteBuffer.getLong(beginTimestampIndex));
+        // 结束时间戳
         this.endTimestamp.set(byteBuffer.getLong(endTimestampIndex));
+        // 开始物理位置
         this.beginPhyOffset.set(byteBuffer.getLong(beginPhyoffsetIndex));
+        // 结束物理位置
         this.endPhyOffset.set(byteBuffer.getLong(endPhyoffsetIndex));
 
+        // 已使用的hashSlot个数
         this.hashSlotCount.set(byteBuffer.getInt(hashSlotcountIndex));
+        // 已有的索引数量
         this.indexCount.set(byteBuffer.getInt(indexCountIndex));
 
         if (this.indexCount.get() <= 0) {
@@ -61,6 +67,9 @@ public class IndexHeader {
         }
     }
 
+    /**
+     * 更新头信息
+     */
     public void updateByteBuffer() {
         this.byteBuffer.putLong(beginTimestampIndex, this.beginTimestamp.get());
         this.byteBuffer.putLong(endTimestampIndex, this.endTimestamp.get());

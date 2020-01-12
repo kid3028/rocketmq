@@ -349,7 +349,7 @@ public class BrokerController {
                 @Override
                 public void run() {
                     try {
-                        // 定时持久化消费者偏移量，持久化文件为 ~/store/config/consumerOffset.json
+                        // 定时持久化消费者偏移量，持久化文件为 ~/store/config/consumerOffset.json  Map<topic@group, Map<queue, offset>> offsetTable
                         BrokerController.this.consumerOffsetManager.persist();
                     } catch (Throwable e) {
                         log.error("schedule persist consumerOffset error.", e);
@@ -415,7 +415,9 @@ public class BrokerController {
                 // 指定了NameServerAddr则更新NameServer的地址
                 this.brokerOuterAPI.updateNameServerAddressList(this.brokerConfig.getNamesrvAddr());
                 log.info("Set user specified name server address: {}", this.brokerConfig.getNamesrvAddr());
-            } else if (this.brokerConfig.isFetchNamesrvAddrByAddressServer()) {
+            }
+            // 如果用户没有指定NameServer地址，而配置了从远程服务器拉取
+            else if (this.brokerConfig.isFetchNamesrvAddrByAddressServer()) {
                 this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
                     @Override
@@ -430,7 +432,7 @@ public class BrokerController {
                 }, 1000 * 10, 1000 * 60 * 2, TimeUnit.MILLISECONDS);
             }
 
-            // 如果是slavb，启动定时任务，每分钟从master同步配置和offset
+            // 如果是slave，启动定时任务，每分钟从master同步配置和offset
             if (BrokerRole.SLAVE == this.messageStoreConfig.getBrokerRole()) {
                 // 如果指定了HAMasterAddress，则不需要定期更新HAMasterAddress
                 if (this.messageStoreConfig.getHaMasterAddress() != null && this.messageStoreConfig.getHaMasterAddress().length() >= 6) {
@@ -613,16 +615,22 @@ public class BrokerController {
         this.brokerStats = brokerStats;
     }
 
+    /**
+     * 当开启了关闭消费慢的消费者机制之后，如果检测到消费进度落后太多，那么该消费者将会被停用
+     */
     public void protectBroker() {
         if (this.brokerConfig.isDisableConsumeIfConsumerReadSlowly()) {
+            // group_get_fall_size
             final Iterator<Map.Entry<String, MomentStatsItem>> it = this.brokerStatsManager.getMomentStatsItemSetFallSize().getStatsItemTable().entrySet().iterator();
             while (it.hasNext()) {
                 final Map.Entry<String, MomentStatsItem> next = it.next();
                 final long fallBehindBytes = next.getValue().getValue().get();
+                // 如果consumer落后超过了限值
                 if (fallBehindBytes > this.brokerConfig.getConsumerFallbehindThreshold()) {
                     final String[] split = next.getValue().getStatsKey().split("@");
                     final String group = split[2];
                     LOG_PROTECTION.info("[PROTECT_BROKER] the consumer[{}] consume slowly, {} bytes, disable it", group, fallBehindBytes);
+                    // 停止consumer的消息拉取
                     this.subscriptionGroupManager.disableConsume(group);
                 }
             }
@@ -631,9 +639,12 @@ public class BrokerController {
 
     public long headSlowTimeMills(BlockingQueue<Runnable> q) {
         long slowTimeMills = 0;
+        // 取出第一条消息
         final Runnable peek = q.peek();
         if (peek != null) {
+            // 将Runnable转化为RequestTask
             RequestTask rt = BrokerFastFailure.castRunnable(peek);
+            // 从接受到请求到现在的事件差
             slowTimeMills = rt == null ? 0 : this.messageStore.now() - rt.getCreateTimestamp();
         }
 
@@ -644,14 +655,26 @@ public class BrokerController {
         return slowTimeMills;
     }
 
+    /**
+     * 计算接受到第一个消息的时间到现在的时间差
+     * @return
+     */
     public long headSlowTimeMills4SendThreadPoolQueue() {
         return this.headSlowTimeMills(this.sendThreadPoolQueue);
     }
 
+    /**
+     * 计算第一个拉取消息请求的时间到现在的时间差
+     * @return
+     */
     public long headSlowTimeMills4PullThreadPoolQueue() {
         return this.headSlowTimeMills(this.pullThreadPoolQueue);
     }
 
+    /**
+     * 计算第一个查询消息的请求的时间到现在的时间差
+     * @return
+     */
     public long headSlowTimeMills4QueryThreadPoolQueue() {
         return this.headSlowTimeMills(this.queryThreadPoolQueue);
     }
@@ -670,7 +693,11 @@ public class BrokerController {
         this.messageStore = messageStore;
     }
 
+    /**
+     * 打印slave落后master多少
+     */
     private void printMasterAndSlaveDiff() {
+        // slave落后master多少
         long diff = this.messageStore.slaveFallBehindMuch();
 
         // XXX: warn and notify me
@@ -801,6 +828,9 @@ public class BrokerController {
         }
     }
 
+    /**
+     * broker向NameServer发起注销
+     */
     private void unregisterBrokerAll() {
         this.brokerOuterAPI.unregisterBrokerAll(
             this.brokerConfig.getBrokerClusterName(),
@@ -890,6 +920,11 @@ public class BrokerController {
         }
     }
 
+    /**
+     * 注册broker到namesrv
+     * @param topicConfig
+     * @param dataVersion
+     */
     public synchronized void registerIncrementBrokerData(TopicConfig topicConfig, DataVersion dataVersion) {
         TopicConfig registerTopicConfig = topicConfig;
         if (!PermName.isWriteable(this.getBrokerConfig().getBrokerPermission())
@@ -934,12 +969,20 @@ public class BrokerController {
             this.brokerConfig.getBrokerName(),
             this.brokerConfig.getBrokerId(),
             this.brokerConfig.getRegisterBrokerTimeoutMills())) {
+            // 注册broker到namesrv
             doRegisterBrokerAll(checkOrderConfig, oneway, topicConfigWrapper);
         }
     }
 
+    /**
+     * 注册broker到namesrv
+     * @param checkOrderConfig
+     * @param oneway
+     * @param topicConfigWrapper
+     */
     private void doRegisterBrokerAll(boolean checkOrderConfig, boolean oneway,
         TopicConfigSerializeWrapper topicConfigWrapper) {
+        // 注册broker到namesrv
         List<RegisterBrokerResult> registerBrokerResultList = this.brokerOuterAPI.registerBrokerAll(
             this.brokerConfig.getBrokerClusterName(), // borker集群的名字，默认是DefaultCluster
             this.getBrokerAddr(), // broker的地址 ip:port 192.168.0.1:10911
@@ -947,7 +990,8 @@ public class BrokerController {
             this.brokerConfig.getBrokerId(), // 用来唯一标识一个broker set中broker，master是0，salve是正整数
             this.getHAServerAddr(), // HAServer地址 ip:port 192.168.0.1:10912
             topicConfigWrapper, // 包含了broker上所有topic的信息
- /*               {
+ /*
+ {
                         "dataVersion":{
             "counter":2,
                     "timestamp":1514252649572
@@ -972,7 +1016,8 @@ public class BrokerController {
                         "writeQueueNums":1
             }
         }
-}*/
+}
+*/
             this.filterServerManager.buildNewFilterServerList(),
             oneway,
             this.brokerConfig.getRegisterBrokerTimeoutMills(),
@@ -982,6 +1027,7 @@ public class BrokerController {
             RegisterBrokerResult registerBrokerResult = registerBrokerResultList.get(0);
             if (registerBrokerResult != null) {
                 if (this.updateMasterHAServerAddrPeriodically && registerBrokerResult.getHaServerAddr() != null) {
+                    // 更新HAServer地址
                     this.messageStore.updateHaMasterAddress(registerBrokerResult.getHaServerAddr());
                 }
 
@@ -994,6 +1040,15 @@ public class BrokerController {
         }
     }
 
+    /**
+     * broker数据版本是否发生了变化
+     * @param clusterName
+     * @param brokerAddr
+     * @param brokerName
+     * @param brokerId
+     * @param timeoutMills
+     * @return
+     */
     private boolean needRegister(final String clusterName,
         final String brokerAddr,
         final String brokerName,
@@ -1003,6 +1058,7 @@ public class BrokerController {
         TopicConfigSerializeWrapper topicConfigWrapper = this.getTopicConfigManager().buildTopicConfigSerializeWrapper();
         List<Boolean> changeList = brokerOuterAPI.needRegister(clusterName, brokerAddr, brokerName, brokerId, topicConfigWrapper, timeoutMills);
         boolean needRegister = false;
+        // 只要有一个NameServer版本不一样，都需要发起注册
         for (Boolean changed : changeList) {
             if (changed) {
                 needRegister = true;

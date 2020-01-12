@@ -89,6 +89,7 @@ public class IndexService {
 
     /**
      * 加载Index文件
+     * index
      * @param lastExitOK
      * @return
      */
@@ -100,7 +101,9 @@ public class IndexService {
             Arrays.sort(files);
             for (File file : files) {
                 try {
+                    // index 500w 2000w
                     IndexFile f = new IndexFile(file.getPath(), this.hashSlotNum, this.indexNum, 0, 0);
+                    // 加载index
                     f.load();
 
                     if (!lastExitOK) {
@@ -126,6 +129,11 @@ public class IndexService {
         return true;
     }
 
+    /**
+     * 删除offset在执行offset之前的index文件
+     *   在offset之前的视为过期文件
+     * @param offset
+     */
     public void deleteExpiredFile(long offset) {
         Object[] files = null;
         try {
@@ -134,7 +142,9 @@ public class IndexService {
                 return;
             }
 
+            // 获取第一个文件的endPhyOffset
             long endPhyOffset = this.indexFileList.get(0).getEndPhyOffset();
+            // endPhyOffset小于offset，说明文件已经过期
             if (endPhyOffset < offset) {
                 files = this.indexFileList.toArray();
             }
@@ -146,6 +156,7 @@ public class IndexService {
 
         if (files != null) {
             List<IndexFile> fileList = new ArrayList<IndexFile>();
+            // 将过期的文件放入一个list中
             for (int i = 0; i < (files.length - 1); i++) {
                 IndexFile f = (IndexFile) files[i];
                 if (f.getEndPhyOffset() < offset) {
@@ -154,11 +165,15 @@ public class IndexService {
                     break;
                 }
             }
-
+            // 执行删除
             this.deleteExpiredFile(fileList);
         }
     }
 
+    /**
+     * 删除过期文件
+     * @param files
+     */
     private void deleteExpiredFile(List<IndexFile> files) {
         if (!files.isEmpty()) {
             try {
@@ -179,6 +194,9 @@ public class IndexService {
         }
     }
 
+    /**
+     * 删除indexFileList中的文件
+     */
     public void destroy() {
         try {
             this.readWriteLock.writeLock().lock();
@@ -337,7 +355,7 @@ public class IndexService {
             if (null == indexFile) {
                 return null;
             }
-
+            // 如果失败了，会进行重试
             ok = indexFile.putKey(idxKey, msg.getCommitLogOffset(), msg.getStoreTimestamp());
         }
 
@@ -345,6 +363,7 @@ public class IndexService {
     }
 
     /**
+     * 如果有可用的返回，没有则新建
      * Retries to get or create index file.
      *
      * @return {@link IndexFile} or null on failure.
@@ -353,6 +372,7 @@ public class IndexService {
         IndexFile indexFile = null;
 
         for (int times = 0; null == indexFile && times < MAX_TRY_IDX_CREATE; times++) {
+            // 获取最后一个indexFile，如果indexFile满了，重新创建一个
             indexFile = this.getAndCreateLastIndexFile();
             if (null != indexFile)
                 break;
@@ -373,6 +393,10 @@ public class IndexService {
         return indexFile;
     }
 
+    /**
+     * 获取最后一个indexFile，如果indexFile满了，则创建新的，否则返回
+     * @return
+     */
     public IndexFile getAndCreateLastIndexFile() {
         IndexFile indexFile = null;
         IndexFile prevIndexFile = null;
@@ -382,10 +406,14 @@ public class IndexService {
         {
             this.readWriteLock.readLock().lock();
             if (!this.indexFileList.isEmpty()) {
+                // 获取最后一个index
                 IndexFile tmp = this.indexFileList.get(this.indexFileList.size() - 1);
+                // 文件没有满
                 if (!tmp.isWriteFull()) {
                     indexFile = tmp;
-                } else {
+                }
+                // 文件满了
+                else {
                     lastUpdateEndPhyOffset = tmp.getEndPhyOffset();
                     lastUpdateIndexTimestamp = tmp.getEndTimestamp();
                     prevIndexFile = tmp;
@@ -395,8 +423,10 @@ public class IndexService {
             this.readWriteLock.readLock().unlock();
         }
 
+        // 文件满了
         if (indexFile == null) {
             try {
+                // 创建一个新的indexFile
                 String fileName =
                     this.storePath + File.separator
                         + UtilAll.timeMillisToHumanString(System.currentTimeMillis());
@@ -404,6 +434,7 @@ public class IndexService {
                     new IndexFile(fileName, this.hashSlotNum, this.indexNum, lastUpdateEndPhyOffset,
                         lastUpdateIndexTimestamp);
                 this.readWriteLock.writeLock().lock();
+                // 保存新建的indexFile
                 this.indexFileList.add(indexFile);
             } catch (Exception e) {
                 log.error("getLastIndexFile exception ", e);
@@ -411,6 +442,7 @@ public class IndexService {
                 this.readWriteLock.writeLock().unlock();
             }
 
+            // 将上一个已经满的IndexFile flush掉
             if (indexFile != null) {
                 final IndexFile flushThisFile = prevIndexFile;
                 Thread flushThread = new Thread(new Runnable() {
@@ -428,18 +460,25 @@ public class IndexService {
         return indexFile;
     }
 
+    /**
+     * flush文件
+     * @param f
+     */
     public void flush(final IndexFile f) {
         if (null == f)
             return;
 
         long indexMsgTimestamp = 0;
 
+        // indexFile是否已经写满   indexCount已经>=indexNum
         if (f.isWriteFull()) {
             indexMsgTimestamp = f.getEndTimestamp();
         }
 
+        // flush
         f.flush();
 
+        // 更新index检测点
         if (indexMsgTimestamp > 0) {
             this.defaultMessageStore.getStoreCheckpoint().setIndexMsgTimestamp(indexMsgTimestamp);
             this.defaultMessageStore.getStoreCheckpoint().flush();

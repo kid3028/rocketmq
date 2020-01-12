@@ -16,20 +16,21 @@
  */
 package org.apache.rocketmq.broker.subscription;
 
-import java.util.Iterator;
-import java.util.Map.Entry;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import org.apache.rocketmq.broker.BrokerController;
 import org.apache.rocketmq.broker.BrokerPathConfigHelper;
 import org.apache.rocketmq.common.ConfigManager;
 import org.apache.rocketmq.common.DataVersion;
 import org.apache.rocketmq.common.MixAll;
 import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.common.subscription.SubscriptionGroupConfig;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
-import org.apache.rocketmq.common.subscription.SubscriptionGroupConfig;
 import org.apache.rocketmq.remoting.protocol.RemotingSerializable;
+
+import java.util.Iterator;
+import java.util.Map.Entry;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 public class SubscriptionGroupManager extends ConfigManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
@@ -48,6 +49,9 @@ public class SubscriptionGroupManager extends ConfigManager {
         this.init();
     }
 
+    /**
+     * 初始化内部group
+     */
     private void init() {
         {
             SubscriptionGroupConfig subscriptionGroupConfig = new SubscriptionGroupConfig();
@@ -96,6 +100,10 @@ public class SubscriptionGroupManager extends ConfigManager {
         }
     }
 
+    /**
+     * 更新group订阅信息
+     * @param config
+     */
     public void updateSubscriptionGroupConfig(final SubscriptionGroupConfig config) {
         SubscriptionGroupConfig old = this.subscriptionGroupTable.put(config.getGroupName(), config);
         if (old != null) {
@@ -109,6 +117,10 @@ public class SubscriptionGroupManager extends ConfigManager {
         this.persist();
     }
 
+    /**
+     * 将该消费组设置为不可用
+     * @param groupName
+     */
     public void disableConsume(final String groupName) {
         SubscriptionGroupConfig old = this.subscriptionGroupTable.get(groupName);
         if (old != null) {
@@ -117,9 +129,16 @@ public class SubscriptionGroupManager extends ConfigManager {
         }
     }
 
+    /**
+     * 查找group订阅信息
+     * @param group
+     * @return
+     */
     public SubscriptionGroupConfig findSubscriptionGroupConfig(final String group) {
+        // Map<String, SubscriptionGroupConfig>
         SubscriptionGroupConfig subscriptionGroupConfig = this.subscriptionGroupTable.get(group);
         if (null == subscriptionGroupConfig) {
+            // 允许自动创建消费组 或者 是系统消费组， 创建保存，并返回
             if (brokerController.getBrokerConfig().isAutoCreateSubscriptionGroup() || MixAll.isSysConsumerGroup(group)) {
                 subscriptionGroupConfig = new SubscriptionGroupConfig();
                 subscriptionGroupConfig.setGroupName(group);
@@ -162,6 +181,10 @@ public class SubscriptionGroupManager extends ConfigManager {
         return RemotingSerializable.toJson(this, prettyFormat);
     }
 
+    /**
+     * 第一次启动的时候，打印订阅信息
+     * @param sgm
+     */
     private void printLoadDataWhenFirstBoot(final SubscriptionGroupManager sgm) {
         Iterator<Entry<String, SubscriptionGroupConfig>> it = sgm.getSubscriptionGroupTable().entrySet().iterator();
         while (it.hasNext()) {
@@ -178,6 +201,10 @@ public class SubscriptionGroupManager extends ConfigManager {
         return dataVersion;
     }
 
+    /**
+     * 删除groupName的订阅信息
+     * @param groupName
+     */
     public void deleteSubscriptionGroupConfig(final String groupName) {
         SubscriptionGroupConfig old = this.subscriptionGroupTable.remove(groupName);
         if (old != null) {

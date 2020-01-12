@@ -21,6 +21,9 @@ import org.apache.rocketmq.common.protocol.heartbeat.SubscriptionData;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
 import org.apache.rocketmq.store.MessageFilter;
 
+/**
+ * 消息拉取请求
+ */
 public class PullRequest {
     // 请求命令
     private final RemotingCommand requestCommand;

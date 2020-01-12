@@ -116,6 +116,7 @@ public abstract class NettyRemotingAbstract {
     public abstract ChannelEventListener getChannelEventListener();
 
     /**
+     * 添加NettyEvent
      * Put a netty event to the executor.
      *
      * @param event Netty event instance.
@@ -362,9 +363,9 @@ public abstract class NettyRemotingAbstract {
      * </p>
      */
     public void scanResponseTable() {
-        // 记录所有移除的请求
+        // 记录所有到期或者过期的请求
         final List<ResponseFuture> rfList = new LinkedList<ResponseFuture>();
-        // responseTable缓存所有正在进行的请求
+        // responseTable缓存所有正在进行的请求 Map<opaque, ResponseFuture>
         Iterator<Entry<Integer, ResponseFuture>> it = this.responseTable.entrySet().iterator();
         while (it.hasNext()) {
             Entry<Integer, ResponseFuture> next = it.next();
@@ -376,12 +377,13 @@ public abstract class NettyRemotingAbstract {
                 rep.release();
                 // 移除当前请求
                 it.remove();
-                // 添加到移除请求列表中
+                // 添加到到期请求列表中
                 rfList.add(rep);
                 log.warn("remove timeout request, " + rep);
             }
         }
 
+        // 立即执行到期到的请求
         for (ResponseFuture rf : rfList) {
             try {
                 // 在回调执行器中执行回调，如果回调执行器为null，则直接在当前线程中执行
@@ -606,7 +608,7 @@ public abstract class NettyRemotingAbstract {
 
     /**
      * 专门的线程监听channel的各种事件
-     * 朱勇是循环地从一个LinkedBlockingQueue中读取事件，然后调用channelEventListener的不同方法处理事件
+     * 主要是循环地从一个LinkedBlockingQueue中读取事件，然后调用channelEventListener的不同方法处理事件
      */
     class NettyEventExecutor extends ServiceThread {
         // 使用linkedBlockingQueue来存储待处理的NettyEvent

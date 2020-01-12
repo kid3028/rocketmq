@@ -155,10 +155,21 @@ public class RemotingUtil {
         return sb.toString();
     }
 
+    /**
+     * 发起socket连接
+     * @param remote
+     * @return
+     */
     public static SocketChannel connect(SocketAddress remote) {
         return connect(remote, 1000 * 5);
     }
 
+    /**
+     * 发起socket连接
+     * @param remote
+     * @param timeoutMillis
+     * @return
+     */
     public static SocketChannel connect(SocketAddress remote, final int timeoutMillis) {
         SocketChannel sc = null;
         try {

@@ -16,16 +16,21 @@
  */
 package org.apache.rocketmq.common;
 
-import java.io.IOException;
 import org.apache.rocketmq.common.constant.LoggerName;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
+
+import java.io.IOException;
 
 public abstract class ConfigManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.COMMON_LOGGER_NAME);
 
     public abstract String encode();
 
+    /**
+     * 加载fileName下的文件
+     * @return
+     */
     public boolean load() {
         String fileName = null;
         try {
@@ -68,8 +73,16 @@ public abstract class ConfigManager {
     public abstract void decode(final String jsonString);
 
     public synchronized void persist() {
+        // consumeroffset.json Map<topic@group, Map<queue, offset>> offsetTable
+        // consumerFilter.json ConcurrentMap<String/*Topic*/, FilterDataMapByTopic> filterDataByTopic
+        // topics.json topicConfigTable dataVersion
+        // subscriptionGroup.json subscriptionTable dataVersion
         String jsonString = this.encode(true);
         if (jsonString != null) {
+            // comsumeroffset.json
+            // consumerFilter.json
+            // topic.json
+            // subscriptionGroup.json
             String fileName = this.configFilePath();
             try {
                 MixAll.string2File(jsonString, fileName);

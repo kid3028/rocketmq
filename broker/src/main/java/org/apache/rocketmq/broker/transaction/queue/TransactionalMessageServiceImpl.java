@@ -560,6 +560,7 @@ public class TransactionalMessageServiceImpl implements TransactionalMessageServ
      */
     private OperationResult getHalfMessageByOffset(long commitLogOffset) {
         OperationResult response = new OperationResult();
+        // 根据commitLogOffset找到prepare(half)消息
         MessageExt messageExt = this.transactionalMessageBridge.lookMessageByOffset(commitLogOffset);
         if (messageExt != null) {
             response.setPrepareMessage(messageExt);
@@ -588,6 +589,11 @@ public class TransactionalMessageServiceImpl implements TransactionalMessageServ
         }
     }
 
+    /**
+     * 从commitlog中找出原始的prepare(half)消息
+     * @param requestHeader Commit message request header.
+     * @return
+     */
     @Override
     public OperationResult commitMessage(EndTransactionRequestHeader requestHeader) {
         return getHalfMessageByOffset(requestHeader.getCommitLogOffset());

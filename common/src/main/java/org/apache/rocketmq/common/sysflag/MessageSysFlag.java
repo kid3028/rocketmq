@@ -20,13 +20,25 @@ package org.apache.rocketmq.common.sysflag;
  * 消息类型
  */
 public class MessageSysFlag {
+    //
+    // 1   0000_0001
     public final static int COMPRESSED_FLAG = 0x1;
+    // 2  0000_0010
     public final static int MULTI_TAGS_FLAG = 0x1 << 1;
+    // 0 0000_0000
     public final static int TRANSACTION_NOT_TYPE = 0;
+    // 4 0000_0100
     public final static int TRANSACTION_PREPARED_TYPE = 0x1 << 2;
+    // 8 0000_0010 -> 0000_1000
     public final static int TRANSACTION_COMMIT_TYPE = 0x2 << 2;
+    // 12 0000_0011 ->  0000_1100
     public final static int TRANSACTION_ROLLBACK_TYPE = 0x3 << 2;
 
+    /**
+     * 如果 & 之后的结果不为0，那么flag为 TRANSACTION_ROLLBACK_TYPE、 TRANSACTION_COMMIT_TYPE、 TRANSACTION_PREPARED_TYPE ，即消息类型为事务类消息
+     * @param flag
+     * @return
+     */
     public static int getTransactionValue(final int flag) {
         return flag & TRANSACTION_ROLLBACK_TYPE;
     }

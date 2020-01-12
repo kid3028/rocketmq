@@ -277,6 +277,13 @@ public class DefaultRequestProcessor implements NettyRequestProcessor {
         return true;
     }
 
+    /**
+     * 处理broker的版本查询请求
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     public RemotingCommand queryBrokerTopicConfig(ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
         final RemotingCommand response = RemotingCommand.createResponseCommand(QueryDataVersionResponseHeader.class);
@@ -285,11 +292,14 @@ public class DefaultRequestProcessor implements NettyRequestProcessor {
             (QueryDataVersionRequestHeader) request.decodeCommandCustomHeader(QueryDataVersionRequestHeader.class);
         DataVersion dataVersion = DataVersion.decode(request.getBody(), DataVersion.class);
 
+        // 判断NameServer中broker的版本与broker上传的是否发生了变化
         Boolean changed = this.namesrvController.getRouteInfoManager().isBrokerTopicConfigChanged(requestHeader.getBrokerAddr(), dataVersion);
+        // 如果没有发生变化，更新broker最新一次更新时间为当前时间
         if (!changed) {
             this.namesrvController.getRouteInfoManager().updateBrokerInfoUpdateTimestamp(requestHeader.getBrokerAddr());
         }
 
+        // 获取broker版本信息
         DataVersion nameSeverDataVersion = this.namesrvController.getRouteInfoManager().queryBrokerTopicConfig(requestHeader.getBrokerAddr());
         response.setCode(ResponseCode.SUCCESS);
         response.setRemark(null);

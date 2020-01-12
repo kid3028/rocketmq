@@ -16,6 +16,9 @@
  */
 package org.apache.rocketmq.remoting.netty;
 
+/**
+ * Netty时间类型：连接、关闭、空闲、异常
+ */
 public enum NettyEventType {
     CONNECT,
     CLOSE,

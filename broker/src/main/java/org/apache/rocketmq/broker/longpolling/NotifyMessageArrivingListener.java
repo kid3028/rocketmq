@@ -21,6 +21,9 @@ import org.apache.rocketmq.store.MessageArrivingListener;
 
 import java.util.Map;
 
+/**
+ * 当有消息到达时通知消息拉取线程
+ */
 public class NotifyMessageArrivingListener implements MessageArrivingListener {
     private final PullRequestHoldService pullRequestHoldService;
 
@@ -42,6 +45,7 @@ public class NotifyMessageArrivingListener implements MessageArrivingListener {
     @Override
     public void arriving(String topic, int queueId, long logicOffset, long tagsCode,
         long msgStoreTime, byte[] filterBitMap, Map<String, String> properties) {
+        // 唤醒等待拉取消息的线程
         this.pullRequestHoldService.notifyMessageArriving(topic, queueId, logicOffset, tagsCode,
             msgStoreTime, filterBitMap, properties);
     }

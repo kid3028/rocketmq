@@ -73,6 +73,10 @@ public class HAService {
         this.haClient = new HAClient();
     }
 
+    /**
+     * 更新HAMaster地址
+     * @param newAddr
+     */
     public void updateMasterAddress(final String newAddr) {
         if (this.haClient != null) {
             this.haClient.updateMasterAddress(newAddr);
@@ -83,6 +87,11 @@ public class HAService {
         this.groupTransferService.putRequest(request);
     }
 
+    /**
+     * slave如果落后太多，或者没有slave连接，返回false
+     * @param masterPutWhere
+     * @return
+     */
     public boolean isSlaveOK(final long masterPutWhere) {
         boolean result = this.connectionCount.get() > 0;
         result =
@@ -421,9 +430,16 @@ public class HAService {
             this.selector = RemotingUtil.openSelector();
         }
 
+        /**
+         * 更新HAMaster地址
+         * @param newAddr
+         */
         public void updateMasterAddress(final String newAddr) {
+            // 获取本地缓存的HAMaster地址
             String currentAddr = this.masterAddress.get();
+            // 如果本地缓存的HAMaster地址为空，或者与newAdrr不相等
             if (currentAddr == null || !currentAddr.equals(newAddr)) {
+                // 更新本地HAMaster信息
                 this.masterAddress.set(newAddr);
                 log.info("update master address, OLD: " + currentAddr + " NEW: " + newAddr);
             }

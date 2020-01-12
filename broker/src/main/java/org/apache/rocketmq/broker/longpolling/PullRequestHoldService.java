@@ -33,7 +33,7 @@ import java.util.concurrent.ConcurrentMap;
 /**
  * 消息拉取时为了提交网络性能，在消息服务端根据拉去偏移量去物理文件查找消息时，如果没有找到，并不会立即返回消费未找到，
  * 而是会将该线程挂起一段时间，然后重试。
- * 挂起分为长轮询和短轮询，在broker端可以通过longPullingEnable=true来开启长轮询，设置longPullingEnable=true开启短轮询。
+ * 挂起分为长轮询和短轮询，在broker端可以通过longPullingEnable=true来开启长轮询，设置longPullingEnable=false开启短轮询。
  * 短轮询：第一次未拉取到消息后等待shortPollingTimeMillis时间后再试。默认1s
  * 长轮询：根据消费者设置的挂起超时时间，DefaultMQPullConsumer#brokerSuspendMaxTimeMillis,默认20s
  *
@@ -79,6 +79,12 @@ public class PullRequestHoldService extends ServiceThread {
         mpr.addPullRequest(pullRequest);
     }
 
+    /**
+     * 创建消息拉取key   topic@queueId
+     * @param topic
+     * @param queueId
+     * @return
+     */
     private String buildKey(final String topic, final int queueId) {
         StringBuilder sb = new StringBuilder();
         sb.append(topic);
@@ -163,6 +169,7 @@ public class PullRequestHoldService extends ServiceThread {
         long msgStoreTime, byte[] filterBitMap, Map<String, String> properties) {
         // topic@queueId
         String key = this.buildKey(topic, queueId);
+        // 获取在这个队列下排队的请求
         ManyPullRequest mpr = this.pullRequestTable.get(key);
         if (mpr != null) {
             // clone等待的List，同时会清空等待列表，保证线程安全
@@ -170,14 +177,17 @@ public class PullRequestHoldService extends ServiceThread {
             if (requestList != null) {
                 List<PullRequest> replayList = new ArrayList<PullRequest>();
 
-                // 循环执行Request
+                // 循环执行Request  因为mpr中排队的拉取请求可能来自不同的消费组，不同的消费组进度不一样，所以这里需要遍历所有消息拉取请求
                 for (PullRequest request : requestList) {
+                    // 新消息的offset
                     long newestOffset = maxOffset;
+                    // 新消息的offset小于拉取请求的offset
                     if (newestOffset <= request.getPullFromThisOffset()) {
+                        // 获取目前队列最大的offset
                         newestOffset = this.brokerController.getMessageStore().getMaxOffsetInQueue(topic, queueId);
                     }
 
-                    // 判断等待的时间内有没有新的消息进来
+                    // 有消息可以拉取
                     if (newestOffset > request.getPullFromThisOffset()) {
                         // 判断消息是否符合过滤条件，对于定时唤醒任务，match=true
                         boolean match = request.getMessageFilter().isMatchedByConsumeQueue(tagsCode,

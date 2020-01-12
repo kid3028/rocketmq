@@ -103,6 +103,11 @@ public class ConsumerFilterManager extends ConfigManager {
         return consumerFilterData;
     }
 
+    /**
+     * 注册consumerGroup的订阅规则
+     * @param consumerGroup
+     * @param subList
+     */
     public void register(final String consumerGroup, final Collection<SubscriptionData> subList) {
         for (SubscriptionData subscriptionData : subList) {
             register(
@@ -136,8 +141,18 @@ public class ConsumerFilterManager extends ConfigManager {
         }
     }
 
+    /**
+     * 注册consumerGroup的订阅规则
+     * @param topic
+     * @param consumerGroup
+     * @param expression
+     * @param type
+     * @param clientVersion
+     * @return
+     */
     public boolean register(final String topic, final String consumerGroup, final String expression,
         final String type, final long clientVersion) {
+        // 不支持tag过滤注册
         if (ExpressionType.isTagType(type)) {
             return false;
         }
@@ -159,7 +174,12 @@ public class ConsumerFilterManager extends ConfigManager {
         return filterDataMapByTopic.register(consumerGroup, expression, type, bloomFilterData, clientVersion);
     }
 
+    /**
+     * 注销consumerGroup
+     * @param consumerGroup
+     */
     public void unRegister(final String consumerGroup) {
+        // Map<topic, FilterDataByTopic>
         for (String topic : filterDataByTopic.keySet()) {
             this.filterDataByTopic.get(topic).unRegister(consumerGroup);
         }
@@ -336,11 +356,16 @@ public class ConsumerFilterManager extends ConfigManager {
             this.topic = topic;
         }
 
+        /**
+         * 将该consumerGroup移除
+         * @param consumerGroup
+         */
         public void unRegister(String consumerGroup) {
             if (!this.groupFilterData.containsKey(consumerGroup)) {
                 return;
             }
 
+            // 获取到该consumerGroup的ConsumerFilterData
             ConsumerFilterData data = this.groupFilterData.get(consumerGroup);
 
             if (data == null || data.isDead()) {

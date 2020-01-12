@@ -18,15 +18,6 @@
 package org.apache.rocketmq.broker.filtersrv;
 
 import io.netty.channel.Channel;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map.Entry;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import org.apache.rocketmq.broker.BrokerController;
 import org.apache.rocketmq.broker.BrokerStartup;
 import org.apache.rocketmq.common.ThreadFactoryImpl;
@@ -34,6 +25,12 @@ import org.apache.rocketmq.common.constant.LoggerName;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.remoting.common.RemotingUtil;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map.Entry;
+import java.util.concurrent.*;
 
 public class FilterServerManager {
 
@@ -64,15 +61,24 @@ public class FilterServerManager {
         }, 1000 * 5, 1000 * 30, TimeUnit.MILLISECONDS);
     }
 
+    /**
+     * 创建FilterServer
+     */
     public void createFilterServer() {
         int more =
             this.brokerController.getBrokerConfig().getFilterServerNums() - this.filterServerTable.size();
+        // 构建FilterServer启动明林
         String cmd = this.buildStartCommand();
         for (int i = 0; i < more; i++) {
+            // 执行命令
             FilterServerUtil.callShell(cmd, log);
         }
     }
 
+    /**
+     * 构建FilterServer启动命令
+     * @return
+     */
     private String buildStartCommand() {
         String config = "";
         if (BrokerStartup.configFile != null) {
@@ -127,6 +133,7 @@ public class FilterServerManager {
     }
 
     public void doChannelCloseEvent(final String remoteAddr, final Channel channel) {
+        // Map<Channel, FilterServerInfo>
         FilterServerInfo old = this.filterServerTable.remove(channel);
         if (old != null) {
             log.warn("The Filter Server<{}> connection<{}> closed, remove it", old.getFilterServerAddr(),

@@ -123,6 +123,13 @@ public class QueryMessageProcessor implements NettyRequestProcessor {
         return response;
     }
 
+    /**
+     * 查看消息，通过id
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     public RemotingCommand viewMessageById(ChannelHandlerContext ctx, RemotingCommand request)
         throws RemotingCommandException {
         final RemotingCommand response = RemotingCommand.createResponseCommand(null);
@@ -131,6 +138,9 @@ public class QueryMessageProcessor implements NettyRequestProcessor {
 
         response.setOpaque(request.getOpaque());
 
+        /**
+         * 从offset开始截取mappedFile 一条消息的内容
+         */
         final SelectMappedBufferResult selectMappedBufferResult =
             this.brokerController.getMessageStore().selectOneMessageByOffset(requestHeader.getOffset());
         if (selectMappedBufferResult != null) {

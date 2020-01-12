@@ -117,12 +117,24 @@ public class MappedFile extends ReferenceResource {
         }
     }
 
+    /**
+     * 释放掉MappedByteBuffer
+     * @param buffer
+     */
     public static void clean(final ByteBuffer buffer) {
+        // 如果buffer不为空  || 不是堆外内存  || 容量等于0 则不需要手动释放，交由JVM回收
         if (buffer == null || !buffer.isDirect() || buffer.capacity() == 0)
             return;
         invoke(invoke(viewed(buffer), "cleaner"), "clean");
     }
 
+    /**
+     * 调用相关方法
+     * @param target
+     * @param methodName
+     * @param args
+     * @return
+     */
     private static Object invoke(final Object target, final String methodName, final Class<?>... args) {
         return AccessController.doPrivileged(new PrivilegedAction<Object>() {
             public Object run() {
@@ -150,12 +162,14 @@ public class MappedFile extends ReferenceResource {
         String methodName = "viewedBuffer";
 
         Method[] methods = buffer.getClass().getMethods();
+        // 找到attachment
         for (int i = 0; i < methods.length; i++) {
             if (methods[i].getName().equals("attachment")) {
                 methodName = "attachment";
                 break;
             }
         }
+
 
         ByteBuffer viewedBuffer = (ByteBuffer) invoke(buffer, methodName);
         if (viewedBuffer == null)
@@ -196,6 +210,7 @@ public class MappedFile extends ReferenceResource {
         this.fileName = fileName;
         this.fileSize = fileSize;
         this.file = new File(fileName);
+        // 文件名即文件第一个记录的offset
         this.fileFromOffset = Long.parseLong(this.file.getName());
         boolean ok = false;
 
@@ -203,6 +218,7 @@ public class MappedFile extends ReferenceResource {
 
         try {
             this.fileChannel = new RandomAccessFile(this.file, "rw").getChannel();
+            // 将文件读入mappedByteBuffer
             this.mappedByteBuffer = this.fileChannel.map(MapMode.READ_WRITE, 0, fileSize);
             TOTAL_MAPPED_VIRTUAL_MEMORY.addAndGet(fileSize);
             TOTAL_MAPPED_FILES.incrementAndGet();
@@ -242,6 +258,12 @@ public class MappedFile extends ReferenceResource {
         return appendMessagesInner(msg, cb);
     }
 
+    /**
+     * 写入消息
+     * @param messageExtBatch
+     * @param cb
+     * @return
+     */
     public AppendMessageResult appendMessages(final MessageExtBatch messageExtBatch, final AppendMessageCallback cb) {
         return appendMessagesInner(messageExtBatch, cb);
     }
@@ -346,11 +368,14 @@ public class MappedFile extends ReferenceResource {
      * @return The current flushed position
      */
     public int flush(final int flushLeastPages) {
+        // 判断是否能刷盘
         if (this.isAbleToFlush(flushLeastPages)) {
             if (this.hold()) {
+                // 目前最多可以读取到的位置，也就是写到的最大位置
                 int value = getReadPosition();
 
                 try {
+                    // 进行刷盘，数据只会到writeBuffer、mappedByteBuffer中
                     //We only append data to fileChannel or mappedByteBuffer, never both.
                     if (writeBuffer != null || this.fileChannel.position() != 0) {
                         this.fileChannel.force(false);
@@ -361,6 +386,7 @@ public class MappedFile extends ReferenceResource {
                     log.error("Error occurred when force data to disk.", e);
                 }
 
+                // 更新刷新位置到写位置
                 this.flushedPosition.set(value);
                 this.release();
             } else {
@@ -368,6 +394,7 @@ public class MappedFile extends ReferenceResource {
                 this.flushedPosition.set(getReadPosition());
             }
         }
+        // 返回刷新位置
         return this.getFlushedPosition();
     }
 
@@ -430,18 +457,31 @@ public class MappedFile extends ReferenceResource {
         }
     }
 
+    /**
+     * 是否可以刷盘
+     *   1.mappedFile写满了
+     *   2.可刷新大小满足flushLeastPages
+     *   3.有新的写入
+     * @param flushLeastPages
+     * @return
+     */
     private boolean isAbleToFlush(final int flushLeastPages) {
+        // 上次刷盘位置
         int flush = this.flushedPosition.get();
+        // 上次写位置
         int write = getReadPosition();
 
+        // mappedFile是否已经写满，写满进行刷盘
         if (this.isFull()) {
             return true;
         }
 
+        // 满足最小刷盘页
         if (flushLeastPages > 0) {
             return ((write / OS_PAGE_SIZE) - (flush / OS_PAGE_SIZE)) >= flushLeastPages;
         }
 
+        // 有新的写入
         return write > flush;
     }
 
@@ -482,6 +522,11 @@ public class MappedFile extends ReferenceResource {
         this.flushedPosition.set(pos);
     }
 
+    /**
+     * 这个mappedFile是否已经写满
+     *  wrotePosition == fileSize
+     * @return
+     */
     public boolean isFull() {
         return this.fileSize == this.wrotePosition.get();
     }
@@ -522,13 +567,16 @@ public class MappedFile extends ReferenceResource {
     public SelectMappedBufferResult selectMappedBuffer(int pos) {
         // 当前最大可读位置
         int readPosition = getReadPosition();
+        // 相对位置pos在可读范围内
         if (pos < readPosition && pos >= 0) {
             if (this.hold()) {
                 ByteBuffer byteBuffer = this.mappedByteBuffer.slice();
+                // 读取范围 pos --  pos + readPosition
                 byteBuffer.position(pos);
                 int size = readPosition - pos;
                 ByteBuffer byteBufferNew = byteBuffer.slice();
                 byteBufferNew.limit(size);
+                // 截取数据
                 return new SelectMappedBufferResult(this.fileFromOffset + pos, byteBufferNew, size, this);
             }
         }
@@ -536,6 +584,11 @@ public class MappedFile extends ReferenceResource {
         return null;
     }
 
+    /**
+     * 清除文件
+     * @param currentRef
+     * @return
+     */
     @Override
     public boolean cleanup(final long currentRef) {
         if (this.isAvailable()) {
@@ -557,6 +610,11 @@ public class MappedFile extends ReferenceResource {
         return true;
     }
 
+    /**
+     * 强制删除文件
+     * @param intervalForcibly
+     * @return
+     */
     public boolean destroy(final long intervalForcibly) {
         this.shutdown(intervalForcibly);
 
@@ -603,6 +661,11 @@ public class MappedFile extends ReferenceResource {
         this.committedPosition.set(pos);
     }
 
+    /**
+     * 对mappedFile进行预热
+     * @param type
+     * @param pages
+     */
     public void warmMappedFile(FlushDiskType type, int pages) {
         long beginTime = System.currentTimeMillis();
         ByteBuffer byteBuffer = this.mappedByteBuffer.slice();

@@ -141,6 +141,9 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
         loadSslContext();
     }
 
+    /**
+     * 构建Ssl上下文
+     */
     public void loadSslContext() {
         TlsMode tlsMode = TlsSystemConfig.tlsMode;
         log.info("Server is running in TLS {} mode", tlsMode.getName());
@@ -269,7 +272,7 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
         }
 
         if (this.channelEventListener != null) {
-            // 如果事件执行器不空，那么启动事件执行器
+            // 如果事件执行器不空，那么启动事件执行器，监听channel的close、idle、exception
             this.nettyEventExecutor.start();
         }
 

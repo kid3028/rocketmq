@@ -63,6 +63,9 @@ import java.net.UnknownHostException;
 import java.util.*;
 import java.util.concurrent.ConcurrentMap;
 
+/**
+ * admin请求处理
+ */
 public class AdminBrokerProcessor implements NettyRequestProcessor {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     private final BrokerController brokerController;
@@ -744,6 +747,13 @@ public class AdminBrokerProcessor implements NettyRequestProcessor {
         return response;
     }
 
+    /**
+     * 设置topic@group的offset
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     public RemotingCommand resetOffset(ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
         final ResetOffsetRequestHeader requestHeader =

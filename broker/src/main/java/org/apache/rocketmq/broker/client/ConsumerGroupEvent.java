@@ -16,6 +16,10 @@
  */
 package org.apache.rocketmq.broker.client;
 
+/**
+ * consumerGroup时间类型
+ *    change  unregister  register
+ */
 public enum ConsumerGroupEvent {
 
     /**

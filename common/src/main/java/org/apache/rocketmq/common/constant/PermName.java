@@ -17,9 +17,14 @@
 package org.apache.rocketmq.common.constant;
 
 public class PermName {
+    // 0x1 --> 1 --> 0001   0000_1111
+    // 0000_1000 8
     public static final int PERM_PRIORITY = 0x1 << 3;
+    // 0000_0100 4
     public static final int PERM_READ = 0x1 << 2;
+    // 0000_0010 2
     public static final int PERM_WRITE = 0x1 << 1;
+    // 0000_0001 1
     public static final int PERM_INHERIT = 0x1 << 0;
 
     public static String perm2String(final int perm) {

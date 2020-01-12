@@ -72,6 +72,13 @@ public class ConsumerManageProcessor implements NettyRequestProcessor {
         return false;
     }
 
+    /**
+     * 获取group组下的consumer列表
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     public RemotingCommand getConsumerListByGroup(ChannelHandlerContext ctx, RemotingCommand request)
         throws RemotingCommandException {
         final RemotingCommand response =
@@ -80,10 +87,12 @@ public class ConsumerManageProcessor implements NettyRequestProcessor {
             (GetConsumerListByGroupRequestHeader) request
                 .decodeCommandCustomHeader(GetConsumerListByGroupRequestHeader.class);
 
+        // 根据group获取ConsumerGroupInfo
         ConsumerGroupInfo consumerGroupInfo =
             this.brokerController.getConsumerManager().getConsumerGroupInfo(
                 requestHeader.getConsumerGroup());
         if (consumerGroupInfo != null) {
+            // 获取clientId集合
             List<String> clientIds = consumerGroupInfo.getAllClientId();
             if (!clientIds.isEmpty()) {
                 GetConsumerListByGroupResponseBody body = new GetConsumerListByGroupResponseBody();
@@ -145,7 +154,7 @@ public class ConsumerManageProcessor implements NettyRequestProcessor {
             (QueryConsumerOffsetRequestHeader) request
                 .decodeCommandCustomHeader(QueryConsumerOffsetRequestHeader.class);
 
-        // 获取消费进度
+        // 获取消费进度，没有group记录返回-1
         long offset =
             this.brokerController.getConsumerOffsetManager().queryOffset(
                 requestHeader.getConsumerGroup(), requestHeader.getTopic(), requestHeader.getQueueId());
@@ -154,14 +163,18 @@ public class ConsumerManageProcessor implements NettyRequestProcessor {
             responseHeader.setOffset(offset);
             response.setCode(ResponseCode.SUCCESS);
             response.setRemark(null);
-        } else {
+        }
+        // 没有group记录，尝试获取最小offset
+        else {
             // 计算consumequeue最小offset
             long minOffset =
                 this.brokerController.getMessageStore().getMinOffsetInQueue(requestHeader.getTopic(),
                     requestHeader.getQueueId());
+            // 最小offset也《= 0
             if (minOffset <= 0
                 && !this.brokerController.getMessageStore().checkInDiskByConsumeOffset(
                 requestHeader.getTopic(), requestHeader.getQueueId(), 0)) {
+                // 设置offset为0
                 responseHeader.setOffset(0L);
                 response.setCode(ResponseCode.SUCCESS);
                 response.setRemark(null);

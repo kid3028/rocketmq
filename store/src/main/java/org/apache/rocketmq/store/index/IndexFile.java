@@ -83,6 +83,7 @@ public class IndexFile {
 
     public IndexFile(final String fileName, final int hashSlotNum, final int indexNum,
         final long endPhyOffset, final long endTimestamp) throws IOException {
+        // 单个indexFile总大小
         int fileTotalSize =
             IndexHeader.INDEX_HEADER_SIZE + (hashSlotNum * hashSlotSize) + (indexNum * indexSize);
         this.mappedFile = new MappedFile(fileName, fileTotalSize);
@@ -109,20 +110,31 @@ public class IndexFile {
         return this.mappedFile.getFileName();
     }
 
+    /**
+     * 加载index
+     */
     public void load() {
         this.indexHeader.load();
     }
 
+    /**
+     * 刷新index
+     */
     public void flush() {
         long beginTime = System.currentTimeMillis();
         if (this.mappedFile.hold()) {
             this.indexHeader.updateByteBuffer();
+            // flush
             this.mappedByteBuffer.force();
             this.mappedFile.release();
             log.info("flush index file eclipse time(ms) " + (System.currentTimeMillis() - beginTime));
         }
     }
 
+    /**
+     * indexFile是否已经写满  index count > indexNum
+     * @return
+     */
     public boolean isWriteFull() {
         return this.indexHeader.getIndexCount() >= this.indexNum;
     }
@@ -228,6 +240,7 @@ public class IndexFile {
 
     /**
      * 计算Key的hashcode，直接使用string的hashcode
+     * key -> topic#key
      * @param key
      * @return
      */
@@ -280,6 +293,7 @@ public class IndexFile {
             // 跟生成索引时一样,根据key计算出hashcode，然后定位到hash槽的位置
             int keyHash = indexKeyHashMethod(key);
             int slotPos = keyHash % this.hashSlotNum;
+            // hashSlot位置
             int absSlotPos = IndexHeader.INDEX_HEADER_SIZE + slotPos * hashSlotSize;
 
             FileLock fileLock = null;

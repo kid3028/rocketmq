@@ -17,6 +17,7 @@
 package org.apache.rocketmq.store;
 
 /**
+ * 写消息到commitlog的请求类型
  * When write a message to the commit log, returns code
  */
 public enum AppendMessageStatus {

@@ -72,6 +72,7 @@ public class UtilAll {
     }
 
     public static String offset2FileName(final long offset) {
+        // 创建一个20位的数字，不足的位数，在前面用0补齐
         final NumberFormat nf = NumberFormat.getInstance();
         nf.setMinimumIntegerDigits(20);
         nf.setMaximumFractionDigits(0);
@@ -376,10 +377,19 @@ public class UtilAll {
         return true;
     }
 
+    /**
+     * 打印堆栈信息
+     * @return
+     */
     public static String jstack() {
         return jstack(Thread.getAllStackTraces());
     }
 
+    /**
+     * 打印堆栈信息
+     * @param map
+     * @return
+     */
     public static String jstack(Map<Thread, StackTraceElement[]> map) {
         StringBuilder result = new StringBuilder();
         try {

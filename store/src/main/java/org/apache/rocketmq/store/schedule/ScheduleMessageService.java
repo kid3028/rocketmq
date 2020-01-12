@@ -78,6 +78,7 @@ public class ScheduleMessageService extends ConfigManager {
             Entry<Integer, Long> next = it.next();
             int queueId = delayLevel2QueueId(next.getKey());
             long delayOffset = next.getValue();
+            // 获取topic queueId最大offset
             long maxOffset = this.defaultMessageStore.getMaxOffsetInQueue(SCHEDULE_TOPIC, queueId);
             String value = String.format("%d,%d", delayOffset, maxOffset);
             String key = String.format("%s_%d", RunningStats.scheduleMessageOffset.name(), next.getKey());
@@ -85,6 +86,11 @@ public class ScheduleMessageService extends ConfigManager {
         }
     }
 
+    /**
+     * 更新offset
+     * @param delayLevel
+     * @param offset
+     */
     private void updateOffset(int delayLevel, long offset) {
         this.offsetTable.put(delayLevel, offset);
     }
@@ -153,15 +159,21 @@ public class ScheduleMessageService extends ConfigManager {
     }
 
     /**
-     * 将配置的延迟时间转化为对应的毫秒值
+     * 1.加载delayOffset.json
+     * 2.将配置的延迟时间转化为对应的毫秒值
      * @return
      */
     public boolean load() {
         boolean result = super.load();
+        // 将配置的延时时间转化为对应的毫秒值
         result = result && this.parseDelayLevel();
         return result;
     }
 
+    /**
+     * delayOffset.json
+     * @return
+     */
     @Override
     public String configFilePath() {
         return StorePathConfigHelper.getDelayOffsetStorePath(this.defaultMessageStore.getMessageStoreConfig()
@@ -272,6 +284,9 @@ public class ScheduleMessageService extends ConfigManager {
         }
 
 
+        /**
+         * 将到期的消息进行投递
+         */
         public void executeOnTimeup() {
             // 找到该延时等级（实际是将延时等级转化为queueId）对应的ConsumeQueue
             ConsumeQueue cq =
@@ -372,17 +387,23 @@ public class ScheduleMessageService extends ConfigManager {
                                     }
                                 }
                             } else {
+                                // 如果还有消息到期，休息countdown之后再启动任务
                                 ScheduleMessageService.this.timer.schedule(
                                         new DeliverDelayedMessageTimerTask(this.delayLevel, nextOffset),
                                         countdown);
+                                // 更新offset
                                 ScheduleMessageService.this.updateOffset(this.delayLevel, nextOffset);
                                 return;
                             }
                         } // end of for
 
+                        // 已经读取完所有可读取的
+                        // 更新offset
                         nextOffset = offset + (i / ConsumeQueue.CQ_STORE_UNIT_SIZE);
+                        // 休息100ms后继续
                         ScheduleMessageService.this.timer.schedule(new DeliverDelayedMessageTimerTask(
                                 this.delayLevel, nextOffset), DELAY_FOR_A_WHILE);
+                        // 更新offset
                         ScheduleMessageService.this.updateOffset(this.delayLevel, nextOffset);
                         return;
                     } finally {
@@ -390,6 +411,7 @@ public class ScheduleMessageService extends ConfigManager {
                         bufferCQ.release();
                     }
                 } // end of if (bufferCQ != null)
+                // 没有获取到数据
                 else {
                     // 如果根据offsetTable中的offset没有找到对应的消息(可能被删除了)，则按照当前ConsumeQueue的最小offset开始处理
                     long cqMinOffset = cq.getMinOffsetInQueue();
@@ -401,6 +423,7 @@ public class ScheduleMessageService extends ConfigManager {
                 }
             } // end of if (cq != null)
 
+            // 休息100ms后再执行
             ScheduleMessageService.this.timer.schedule(new DeliverDelayedMessageTimerTask(this.delayLevel,
                     failScheduleOffset), DELAY_FOR_A_WHILE);
         }

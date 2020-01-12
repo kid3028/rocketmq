@@ -16,16 +16,17 @@
  */
 package org.apache.rocketmq.store.stats;
 
-import java.util.HashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import org.apache.rocketmq.common.ThreadFactoryImpl;
 import org.apache.rocketmq.common.constant.LoggerName;
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.common.stats.MomentStatsItemSet;
 import org.apache.rocketmq.common.stats.StatsItem;
 import org.apache.rocketmq.common.stats.StatsItemSet;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+
+import java.util.HashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 
 public class BrokerStatsManager {
 
@@ -138,6 +139,12 @@ public class BrokerStatsManager {
         this.statsTable.get(GROUP_GET_NUMS).addValue(statsKey, incValue, 1);
     }
 
+    /**
+     * key ： topic@group
+     * @param topic
+     * @param group
+     * @return
+     */
     public String buildStatsKey(String topic, String group) {
         StringBuffer strBuilder = new StringBuffer();
         strBuilder.append(topic);

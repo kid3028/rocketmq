@@ -49,9 +49,13 @@ public class ResponseFuture {
         this.once = once;
     }
 
+    /**
+     * 执行回调
+     */
     public void executeInvokeCallback() {
         if (invokeCallback != null) {
             if (this.executeCallbackOnlyOnce.compareAndSet(false, true)) {
+                // 执行请求
                 invokeCallback.operationComplete(this);
             }
         }

@@ -60,6 +60,9 @@ public class TransactionalMessageCheckService extends ServiceThread {
         return TransactionalMessageCheckService.class.getSimpleName();
     }
 
+    /**
+     * 每隔60s对消息进行一次回查
+     */
     @Override
     public void run() {
         log.info("Start transaction check service thread!");

@@ -63,6 +63,9 @@ import org.apache.rocketmq.store.stats.BrokerStatsManager;
 import java.nio.ByteBuffer;
 import java.util.List;
 
+/**
+ * 处理拉取消息请求
+ */
 public class PullMessageProcessor implements NettyRequestProcessor {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     private final BrokerController brokerController;
@@ -92,7 +95,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
      *
      *
      * broker处理producer发送来的消息的时候，会有建议broker
-     * broker会返回给consumer建议的brokerI的的情况：
+     * broker会返回给consumer建议的brokerId的情况：
      *    1.如果slave可读并且当前broker消费过慢的时候，如果没有配置org.apache.rocketmq.common.subscription.SubscriptionGroupConfig#whichBrokerWhenConsumeSlowly的时候，默认是返回brokerId为1的broker
      *    2.如果slave可读并且当前broker消费正常的时候，返回当前broker
      *    3.如果slave不可读的时候，返回maser
@@ -103,7 +106,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
      * RocketMQ根据以下两个值进行判断：
      *    a = 当前commitLog的maxOffset - 需要消费消息到的offset的结果
      *    b = RocketMQ可用的内存大小
-     *    如果a > b 则判断为消息消费过慢，a > b 表示需要消费的消息一定不在存在中了，还需读取文件，这样会给还需要写消息的broker带来一定的性能压力，
+     *    如果a > b 则判断为消息消费过慢，a > b 表示需要消费的消息一定不在内存中了，还需读取文件，这样会给还需要写消息的broker带来一定的性能压力，
      *    所以这个时候master建议从slave读取消息
      * @param channel 网络通道
      * @param request 消息拉取请求
@@ -138,7 +141,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
             return response;
         }
 
-        // consumeGroup的消费状态是否是Enable
+        // consumeGroup的消费状态是否是Enable， 消费过慢的consumer会被broker中的定时任务标记为不可用
         if (!subscriptionGroupConfig.isConsumeEnable()) {
             response.setCode(ResponseCode.NO_PERMISSION);
             response.setRemark("subscription group no permission, " + requestHeader.getConsumerGroup());
@@ -149,10 +152,12 @@ public class PullMessageProcessor implements NettyRequestProcessor {
         final boolean hasCommitOffsetFlag = PullSysFlag.hasCommitOffsetFlag(requestHeader.getSysFlag());
         final boolean hasSubscriptionFlag = PullSysFlag.hasSubscriptionFlag(requestHeader.getSysFlag());
 
+        // 可挂起时间
         final long suspendTimeoutMillisLong = hasSuspendFlag ? requestHeader.getSuspendTimeoutMillis() : 0;
 
         // 请求的topic是否存在，并且可选，请求的queueId是否合法
         TopicConfig topicConfig = this.brokerController.getTopicConfigManager().selectTopicConfig(requestHeader.getTopic());
+        // 拉取的topic信息不存在
         if (null == topicConfig) {
             log.error("the topic {} not exist, consumer: {}", requestHeader.getTopic(), RemotingHelper.parseChannelRemoteAddr(channel));
             response.setCode(ResponseCode.TOPIC_NOT_EXIST);
@@ -160,12 +165,14 @@ public class PullMessageProcessor implements NettyRequestProcessor {
             return response;
         }
 
+        // 拉取的topic不可读
         if (!PermName.isReadable(topicConfig.getPerm())) {
             response.setCode(ResponseCode.NO_PERMISSION);
             response.setRemark("the topic[" + requestHeader.getTopic() + "] pulling message is forbidden");
             return response;
         }
 
+        // 拉取队列非法
         if (requestHeader.getQueueId() < 0 || requestHeader.getQueueId() >= topicConfig.getReadQueueNums()) {
             String errorInfo = String.format("queueId[%d] is illegal, topic:[%s] topicConfig.readQueueNums:[%d] consumer:[%s]",
                 requestHeader.getQueueId(), requestHeader.getTopic(), topicConfig.getReadQueueNums(), channel.remoteAddress());
@@ -222,7 +229,7 @@ public class PullMessageProcessor implements NettyRequestProcessor {
                 return response;
             }
 
-            // 检查consumer未订阅消息
+            // 检查consumer订阅消息
             subscriptionData = consumerGroupInfo.findSubscriptionData(requestHeader.getTopic());
             if (null == subscriptionData) {
                 log.warn("the consumer's subscription not exist, group: {}, topic:{}", requestHeader.getConsumerGroup(), requestHeader.getTopic());

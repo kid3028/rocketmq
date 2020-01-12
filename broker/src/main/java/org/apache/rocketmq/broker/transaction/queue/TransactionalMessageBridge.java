@@ -251,7 +251,9 @@ public class TransactionalMessageBridge {
         return store.putMessage(messageInner);
     }
 
+    // 保存已处理消息
     public boolean putMessage(MessageExtBrokerInner messageInner) {
+        // 持久化消息到commitLog
         PutMessageResult putMessageResult = store.putMessage(messageInner);
         if (putMessageResult != null
             && putMessageResult.getPutMessageStatus() == PutMessageStatus.PUT_OK) {
@@ -279,6 +281,11 @@ public class TransactionalMessageBridge {
         return msgInner;
     }
 
+    /**
+     * 重新构建half消息
+     * @param msgExt
+     * @return
+     */
     public MessageExtBrokerInner renewHalfMessageInner(MessageExt msgExt) {
         MessageExtBrokerInner msgInner = new MessageExtBrokerInner();
         msgInner.setTopic(msgExt.getTopic());
@@ -297,6 +304,12 @@ public class TransactionalMessageBridge {
         return msgInner;
     }
 
+    /**
+     * 构建op消息
+     * @param message
+     * @param messageQueue
+     * @return
+     */
     private MessageExtBrokerInner makeOpMessageInner(Message message, MessageQueue messageQueue) {
         MessageExtBrokerInner msgInner = new MessageExtBrokerInner();
         msgInner.setTopic(message.getTopic());
@@ -347,12 +360,20 @@ public class TransactionalMessageBridge {
         return true;
     }
 
+    /**
+     * 将message写入mq
+     * @param message
+     * @param mq
+     */
     private void writeOp(Message message, MessageQueue mq) {
         MessageQueue opQueue;
+        // 尝试查找mq是否已经在opQueueMap中存在，如果存在，取出已有的opQueue，不存在，保存mq  Map<事务消息MessageQueue， 已处理MessageQueue>
         if (opQueueMap.containsKey(mq)) {
             opQueue = opQueueMap.get(mq);
         } else {
+            // 构建mq对应到的opQueue
             opQueue = getOpQueueByHalf(mq);
+            // 保存
             MessageQueue oldQueue = opQueueMap.putIfAbsent(mq, opQueue);
             if (oldQueue != null) {
                 opQueue = oldQueue;
@@ -361,9 +382,15 @@ public class TransactionalMessageBridge {
         if (opQueue == null) {
             opQueue = new MessageQueue(TransactionalMessageUtil.buildOpTopic(), mq.getBrokerName(), mq.getQueueId());
         }
+        // 写入消息到opQueue
         putMessage(makeOpMessageInner(message, opQueue));
     }
 
+    /**
+     * 构建一个opQueue
+     * @param halfMQ
+     * @return
+     */
     private MessageQueue getOpQueueByHalf(MessageQueue halfMQ) {
         MessageQueue opQueue = new MessageQueue();
         opQueue.setTopic(TransactionalMessageUtil.buildOpTopic());

@@ -30,7 +30,7 @@ import java.nio.channels.WritableByteChannel;
 /**
  * <p>
  *     By default, file region are directly transferred to socket channel which is known as zero copy. In case we need
- *     to encrypt transmission, data being sent should go through the {@link SslHandler}. This encoder ensures this
+ *     to encrypt transmission(加密传输), data being sent should go through the {@link SslHandler}. This encoder ensures this
  *     process.
  * </p>
  */

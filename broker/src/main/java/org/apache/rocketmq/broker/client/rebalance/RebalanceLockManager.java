@@ -46,21 +46,34 @@ public class RebalanceLockManager {
     private final ConcurrentMap<String/* group */, ConcurrentHashMap<MessageQueue, LockEntry>> mqLockTable =
         new ConcurrentHashMap<String, ConcurrentHashMap<MessageQueue, LockEntry>>(1024);
 
+    /**
+     * 尝试锁住某个队列
+     * @param group
+     * @param mq
+     * @param clientId
+     * @return
+     */
     public boolean tryLock(final String group, final MessageQueue mq, final String clientId) {
 
+        // mq是没有被clientId锁定
         if (!this.isLocked(group, mq, clientId)) {
             try {
                 this.lock.lockInterruptibly();
                 try {
+                    // 获取group下队列锁定状态
                     ConcurrentHashMap<MessageQueue, LockEntry> groupValue = this.mqLockTable.get(group);
                     if (null == groupValue) {
                         groupValue = new ConcurrentHashMap<>(32);
                         this.mqLockTable.put(group, groupValue);
                     }
 
+                    // 获取队列mq对应的锁
                     LockEntry lockEntry = groupValue.get(mq);
+                    // 队列mq的锁被释放了
                     if (null == lockEntry) {
+                        // 构建新的锁
                         lockEntry = new LockEntry();
+                        // 设置锁有clientId持有
                         lockEntry.setClientId(clientId);
                         groupValue.put(mq, lockEntry);
                         log.info("tryLock, message queue not locked, I got it. Group: {} NewClientId: {} {}",
@@ -69,13 +82,16 @@ public class RebalanceLockManager {
                             mq);
                     }
 
+                    // 锁由clientId持有
                     if (lockEntry.isLocked(clientId)) {
+                        // 更新锁时间
                         lockEntry.setLastUpdateTimestamp(System.currentTimeMillis());
                         return true;
                     }
 
                     String oldClientId = lockEntry.getClientId();
 
+                    // 如果锁过期了，更新锁持有者为clientId
                     if (lockEntry.isExpired()) {
                         lockEntry.setClientId(clientId);
                         lockEntry.setLastUpdateTimestamp(System.currentTimeMillis());
@@ -108,13 +124,24 @@ public class RebalanceLockManager {
         return true;
     }
 
+    /**
+     * 消费组group中，队列mq是否被clientId锁住
+     * @param group
+     * @param mq
+     * @param clientId
+     * @return
+     */
     private boolean isLocked(final String group, final MessageQueue mq, final String clientId) {
+        // 获取group下队列锁定关系
         ConcurrentHashMap<MessageQueue, LockEntry> groupValue = this.mqLockTable.get(group);
         if (groupValue != null) {
+            // 获取队列mq对应的锁
             LockEntry lockEntry = groupValue.get(mq);
             if (lockEntry != null) {
+                // 锁lockEntry是否被clientId持有
                 boolean locked = lockEntry.isLocked(clientId);
                 if (locked) {
+                    // 更新锁时间
                     lockEntry.setLastUpdateTimestamp(System.currentTimeMillis());
                 }
 
@@ -137,14 +164,18 @@ public class RebalanceLockManager {
         Set<MessageQueue> lockedMqs = new HashSet<MessageQueue>(mqs.size());
         Set<MessageQueue> notLockedMqs = new HashSet<MessageQueue>(mqs.size());
 
+        // 遍历mq
         for (MessageQueue mq : mqs) {
+            // 如果mq是由clientId锁定的，加入lockedMqs set
             if (this.isLocked(group, mq, clientId)) {
                 lockedMqs.add(mq);
             } else {
+                // mq不是由clientId锁定，加入notLockMqs set
                 notLockedMqs.add(mq);
             }
         }
 
+        // 未锁定队列不空
         if (!notLockedMqs.isEmpty()) {
             try {
                 this.lock.lockInterruptibly();
@@ -155,10 +186,14 @@ public class RebalanceLockManager {
                         this.mqLockTable.put(group, groupValue);
                     }
 
+                    // 遍历未锁定队列
                     for (MessageQueue mq : notLockedMqs) {
+                        // 队列锁
                         LockEntry lockEntry = groupValue.get(mq);
+                        // 队列没有被锁定，
                         if (null == lockEntry) {
                             lockEntry = new LockEntry();
+                            // 将mq队列的持有者设置为clientId
                             lockEntry.setClientId(clientId);
                             groupValue.put(mq, lockEntry);
                             log.info(
@@ -168,6 +203,7 @@ public class RebalanceLockManager {
                                 mq);
                         }
 
+                        // 如果mq已经被clientId锁住，更新锁
                         if (lockEntry.isLocked(clientId)) {
                             lockEntry.setLastUpdateTimestamp(System.currentTimeMillis());
                             lockedMqs.add(mq);
@@ -176,6 +212,7 @@ public class RebalanceLockManager {
 
                         String oldClientId = lockEntry.getClientId();
 
+                        // 如果mq对应的锁，失效了，设置锁由clientId持有，并更新锁
                         if (lockEntry.isExpired()) {
                             lockEntry.setClientId(clientId);
                             lockEntry.setLastUpdateTimestamp(System.currentTimeMillis());
@@ -219,10 +256,15 @@ public class RebalanceLockManager {
             try {
                 ConcurrentHashMap<MessageQueue, LockEntry> groupValue = this.mqLockTable.get(group);
                 if (null != groupValue) {
+                    // 遍历mq
                     for (MessageQueue mq : mqs) {
+                        // 获取mq上的锁
                         LockEntry lockEntry = groupValue.get(mq);
+                        // 锁存在
                         if (null != lockEntry) {
+                            // 锁有clientId持有
                             if (lockEntry.getClientId().equals(clientId)) {
+                                // 移除锁定关系
                                 groupValue.remove(mq);
                                 log.info("unlockBatch, Group: {} {} {}",
                                     group,

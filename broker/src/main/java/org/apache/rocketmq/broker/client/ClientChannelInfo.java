@@ -19,6 +19,9 @@ package org.apache.rocketmq.broker.client;
 import io.netty.channel.Channel;
 import org.apache.rocketmq.remoting.protocol.LanguageCode;
 
+/**
+ * client信息
+ */
 public class ClientChannelInfo {
     private final Channel channel;
     private final String clientId;

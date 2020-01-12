@@ -132,8 +132,14 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
         return Math.abs(r.nextInt() % 999) % 999;
     }
 
+    /**
+     * netty客户端启动
+     * NOTE:启动的时候不会创建channel，当需要与远程建立连接的时候，在针对远程建立相对应的channel，然后保存远程地址与channel之间的映射
+     *   {@link NettyRemotingClient#createChannel(String)}方法就是在需要与远程建立连接的时候创建channel
+     */
     @Override
     public void start() {
+        // 默认执行器
         this.defaultEventExecutorGroup = new DefaultEventExecutorGroup(
             nettyClientConfig.getClientWorkerThreads(),
             new ThreadFactory() {
@@ -156,6 +162,7 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
                 @Override
                 public void initChannel(SocketChannel ch) throws Exception {
                     ChannelPipeline pipeline = ch.pipeline();
+                    // 如果使用了tls，设置tls handler
                     if (nettyClientConfig.isUseTLS()) {
                         if (null != sslContext) {
                             pipeline.addFirst(defaultEventExecutorGroup, "sslHandler", sslContext.newHandler(ch.alloc()));
@@ -185,9 +192,12 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
             }
         }, 1000 * 3, 1000);
 
+        // 事件监听不空，则启动事件监听 connect close exception idle
         if (this.channelEventListener != null) {
             this.nettyEventExecutor.start();
         }
+
+        // NOTE:启动的时候不会创建channel，当需要与远程建立连接的时候，在针对远程建立相对应的channel，然后保存远程地址与channel之间的映射
     }
 
     @Override
@@ -223,6 +233,11 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
         }
     }
 
+    /**
+     * 关闭与某个地址的连接
+     * @param addr
+     * @param channel
+     */
     public void closeChannel(final String addr, final Channel channel) {
         if (null == channel)
             return;
@@ -270,6 +285,10 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
         this.rpcHook = rpcHook;
     }
 
+    /**
+     * 关闭某个channel
+     * @param channel
+     */
     public void closeChannel(final Channel channel) {
         if (null == channel)
             return;
@@ -315,24 +334,37 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
         }
     }
 
+    /**
+     * 更新NameServerAddr
+     * @param addrs NameServer地址列表
+     */
     @Override
     public void updateNameServerAddressList(List<String> addrs) {
+        // 获取已经本地保存的NameServer地址
         List<String> old = this.namesrvAddrList.get();
         boolean update = false;
 
         if (!addrs.isEmpty()) {
+            // 本地没有保存NameServer，那么需要更新本地缓存
             if (null == old) {
                 update = true;
-            } else if (addrs.size() != old.size()) {
+            }
+            // 本地保存的NameServer与配置的Nameser地址数量不等，那么需要更新本地缓存
+            else if (addrs.size() != old.size()) {
                 update = true;
-            } else {
+            }
+            // 其他
+            else {
+                // 遍历配置的NameServer，只有有一个地址不同，那么需要更新本地缓存
                 for (int i = 0; i < addrs.size() && !update; i++) {
+                    // 本地缓存中有没有包含所有配置的NameServer
                     if (!old.contains(addrs.get(i))) {
                         update = true;
                     }
                 }
             }
 
+            // 更新本地Nameser缓存
             if (update) {
                 Collections.shuffle(addrs);
                 log.info("name server address updated. NEW : {} , OLD: {}", addrs, old);
@@ -674,6 +706,10 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
         }
     }
 
+    /**
+     * Netty Client channel事件管理
+     *   connect  close  exception idle
+     */
     class NettyConnectManageHandler extends ChannelDuplexHandler {
         @Override
         public void connect(ChannelHandlerContext ctx, SocketAddress remoteAddress, SocketAddress localAddress,

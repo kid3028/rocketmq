@@ -16,20 +16,17 @@
  */
 package org.apache.rocketmq.store;
 
-import java.io.File;
-import java.io.IOException;
-import java.util.ServiceLoader;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.PriorityBlockingQueue;
-import java.util.concurrent.TimeUnit;
 import org.apache.rocketmq.common.ServiceThread;
 import org.apache.rocketmq.common.UtilAll;
 import org.apache.rocketmq.common.constant.LoggerName;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.store.config.BrokerRole;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.ServiceLoader;
+import java.util.concurrent.*;
 
 /**
  * Create MappedFile in advance
@@ -48,6 +45,13 @@ public class AllocateMappedFileService extends ServiceThread {
         this.messageStore = messageStore;
     }
 
+    /**
+     * 存储创建mappedFile的请求
+     * @param nextFilePath
+     * @param nextNextFilePath
+     * @param fileSize
+     * @return
+     */
     public MappedFile putRequestAndReturnMappedFile(String nextFilePath, String nextNextFilePath, int fileSize) {
         int canSubmitRequests = 2;
         if (this.messageStore.getMessageStoreConfig().isTransientStorePoolEnable()) {
@@ -148,19 +152,24 @@ public class AllocateMappedFileService extends ServiceThread {
     }
 
     /**
+     * 处理创建MappedFile的请求
      * Only interrupted by the external thread, will return false
      */
     private boolean mmapOperation() {
         boolean isSuccess = false;
         AllocateRequest req = null;
         try {
+            // 取出一个请求
             req = this.requestQueue.take();
+            // 根据请求的路径从map中取出对应的请求
             AllocateRequest expectedRequest = this.requestTable.get(req.getFilePath());
+            // map中请求为null，说明queue中的请求已经过期
             if (null == expectedRequest) {
                 log.warn("this mmap request expired, maybe cause timeout " + req.getFilePath() + " "
                     + req.getFileSize());
                 return true;
             }
+            // 两个请求不相等，说明queue中的请求已经过期
             if (expectedRequest != req) {
                 log.warn("never expected here,  maybe cause timeout " + req.getFilePath() + " "
                     + req.getFileSize() + ", req:" + req + ", expectedRequest:" + expectedRequest);
@@ -170,6 +179,7 @@ public class AllocateMappedFileService extends ServiceThread {
             if (req.getMappedFile() == null) {
                 long beginTime = System.currentTimeMillis();
 
+                // 为queue中请求创建对应的mappedFile
                 MappedFile mappedFile;
                 if (messageStore.getMessageStoreConfig().isTransientStorePoolEnable()) {
                     try {
@@ -195,6 +205,7 @@ public class AllocateMappedFileService extends ServiceThread {
                     .getMapedFileSizeCommitLog()
                     &&
                     this.messageStore.getMessageStoreConfig().isWarmMapedFileEnable()) {
+                    // 对mappedFile进行预热
                     mappedFile.warmMappedFile(this.messageStore.getMessageStoreConfig().getFlushDiskType(),
                         this.messageStore.getMessageStoreConfig().getFlushLeastPagesWhenWarmMapedFile());
                 }

@@ -82,8 +82,11 @@ public class EndTransactionProcessor implements NettyRequestProcessor {
         }
 
         // 判断是来源于producer主动发送的消息还是broker主动检查返回的消息，这里只是用来记录日志
+        // broker主动回查
         if (requestHeader.getFromTransactionCheck()) {
+
             switch (requestHeader.getCommitOrRollback()) {
+                // 非事务消息直接返回
                 case MessageSysFlag.TRANSACTION_NOT_TYPE: {
                     LOGGER.warn("Check producer[{}] transaction state, but it's pending status."
                             + "RequestHeader: {} Remark: {}",
@@ -114,8 +117,11 @@ public class EndTransactionProcessor implements NettyRequestProcessor {
                 default:
                     return null;
             }
-        } else {
+        }
+        // producer提交
+        else {
             switch (requestHeader.getCommitOrRollback()) {
+                // 非事务消息，直接返回
                 case MessageSysFlag.TRANSACTION_NOT_TYPE: {
                     LOGGER.warn("The producer[{}] end transaction in sending message,  and it's pending status."
                             + "RequestHeader: {} Remark: {}",
@@ -125,10 +131,12 @@ public class EndTransactionProcessor implements NettyRequestProcessor {
                     return null;
                 }
 
+                // commit提交
                 case MessageSysFlag.TRANSACTION_COMMIT_TYPE: {
                     break;
                 }
 
+                // rollback回滚
                 case MessageSysFlag.TRANSACTION_ROLLBACK_TYPE: {
                     LOGGER.warn("The producer[{}] end transaction in sending message, rollback the message."
                             + "RequestHeader: {} Remark: {}",
@@ -177,6 +185,7 @@ public class EndTransactionProcessor implements NettyRequestProcessor {
                 return res;
             }
         }
+        // 如果收到的是回滚事务消息
         else if (MessageSysFlag.TRANSACTION_ROLLBACK_TYPE == requestHeader.getCommitOrRollback()) {
             // 收到回滚事务消息，则不需要重新生成新消息发送，只需要将原来消息的标记位改为delete即可
             result = this.brokerController.getTransactionalMessageService().rollbackMessage(requestHeader);
@@ -201,6 +210,9 @@ public class EndTransactionProcessor implements NettyRequestProcessor {
 
     /**
      * 检查prepare消息是否与结束事务的消息匹配
+     *    1.producerGroupName
+     *    2.queueOffset
+     *    3.commitlogOffset
      * @param msgExt
      * @param requestHeader
      * @return

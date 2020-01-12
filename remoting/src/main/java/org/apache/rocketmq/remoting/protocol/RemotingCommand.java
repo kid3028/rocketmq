@@ -23,6 +23,7 @@ import org.apache.rocketmq.remoting.CommandCustomHeader;
 import org.apache.rocketmq.remoting.annotation.CFNotNull;
 import org.apache.rocketmq.remoting.common.RemotingHelper;
 import org.apache.rocketmq.remoting.exception.RemotingCommandException;
+import org.apache.rocketmq.remoting.netty.NettyDecoder;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
@@ -35,10 +36,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * 在消息传输过程中对所有数据内容的封装。不但包含了所有的数据接口，还包含了编解码操作
  * 总长度 4+4+消息头长度+消息体长度
- * +---------------------+----------------------------+--------------------------------+---------------------------+
- * |  消息长度           | 序列化类型&头部长度             |  消息头数据                      |  消息主体数据                |
- * |  4个字节           | 4字节(2,3,4个字节表示消息头长度) | 头部长度中描述的长度                |  消息长度 - 消息头长度        |
- * +--------------------+----------------------------+---------------------------------+---------------------------+
+ * +----------------------+---------------------------------+-----------------------+---------------------------+
+ * |  消息长度           | 序列化类型&头部长度              |  消息头数据           |  消息主体数据              |
+ * |  4个字节           | 4字节(2,3,4个字节表示消息头长度) | 头部长度中描述的长度   |  消息长度 - 消息头长度     |
+ * +-------------------+---------------------------------+------------------------+---------------------------+
  */
 public class RemotingCommand {
     public static final String SERIALIZE_TYPE_PROPERTY = "rocketmq.serialize.type";
@@ -84,7 +85,7 @@ public class RemotingCommand {
      */
     private int code;
     /**
-     * request 和 response 请求方和英达方实现语言
+     * request 和 response 请求方和应答方实现语言
      */
     private LanguageCode language = LanguageCode.JAVA;
     /**
@@ -115,6 +116,7 @@ public class RemotingCommand {
 
     private SerializeType serializeTypeCurrentRPC = serializeTypeConfigInThisServer;
 
+    // 不对body进行序列化
     private transient byte[] body;
 
     protected RemotingCommand() {
@@ -179,11 +181,18 @@ public class RemotingCommand {
 
     /**
      * 对消息进行解码
+     * +----------------------+---------------------------------+-----------------------+---------------------------+
+     * |  消息长度           | 序列化类型&头部长度              |  消息头数据           |  消息主体数据              |
+     * |  4个字节           | 4字节(2,3,4个字节表示消息头长度) | 头部长度中描述的长度   |  消息长度 - 消息头长度     |
+     * +-------------------+---------------------------------+------------------------+---------------------------+
      * @param byteBuffer
      * @return
      */
     public static RemotingCommand decode(final ByteBuffer byteBuffer) {
-        // 获取消息的长度，不包括消息长度本省
+        /**
+         * 获取消息的长度，不包括消息长度本身
+         * {@link NettyDecoder#NettyDecoder()} 在构造方法中已经通过strip指定了要丢弃的长度
+         */
         int length = byteBuffer.limit();
         // 获取消息头的长度
         int oriHeaderLen = byteBuffer.getInt();
@@ -208,6 +217,11 @@ public class RemotingCommand {
         return cmd;
     }
 
+    /**
+     * 获取int的后24位
+     * @param length
+     * @return
+     */
     public static int getHeaderLength(int length) {
         return length & 0xFFFFFF;
     }
@@ -236,18 +250,27 @@ public class RemotingCommand {
      * @return
      */
     public static SerializeType getProtocolType(int source) {
-        // 第一个字节为协议类型 右移24位
+        // 第一个字节为协议类型 右移24位， 前8位
         return SerializeType.valueOf((byte) ((source >> 24) & 0xFF));
     }
 
+    /**
+     * 创建消息id
+     * @return
+     */
     public static int createNewRequestId() {
         return requestId.incrementAndGet();
     }
 
+    /**
+     * 获取序列化类型
+     * @return
+     */
     public static SerializeType getSerializeTypeConfigInThisServer() {
         return serializeTypeConfigInThisServer;
     }
 
+    // 是否是空字符串
     private static boolean isBlank(String str) {
         int strLen;
         if (str == null || (strLen = str.length()) == 0) {
@@ -261,6 +284,12 @@ public class RemotingCommand {
         return true;
     }
 
+    /**
+     * 设置
+     * @param source
+     * @param type
+     * @return
+     */
     public static byte[] markProtocolType(int source, SerializeType type) {
         // 长度为4字节数组
         byte[] result = new byte[4];

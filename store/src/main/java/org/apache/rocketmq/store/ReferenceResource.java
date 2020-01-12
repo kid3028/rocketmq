@@ -40,6 +40,10 @@ public abstract class ReferenceResource {
         return this.available;
     }
 
+    /**
+     * 关闭
+     * @param intervalForcibly
+     */
     public void shutdown(final long intervalForcibly) {
         /**
          * 如果available为true，表示第一次执行shutdown方法，首先设置available为false，并记录
@@ -51,22 +55,32 @@ public abstract class ReferenceResource {
             this.available = false;
             this.firstShutdownTimestamp = System.currentTimeMillis();
             this.release();
-        } else if (this.getRefCount() > 0) {
+        }
+        // 不是第一次调用shutdown，文件还被引用中
+        else if (this.getRefCount() > 0) {
+            // 已经到了强制删除时间
             if ((System.currentTimeMillis() - this.firstShutdownTimestamp) >= intervalForcibly) {
-                // 在拒绝被删除保护期内destroyMappedFileIntervalForcibly，每执行一次清理任务，将引用次数减去1000，引用数小于1，该文件最将被删除
+                // 在拒绝被删除保护期内destroyMappedFileIntervalForcibly，每执行一次清理任务，将引用次数减去1000，引用数小于1，该文件最终将被删除
                 this.refCount.set(-1000 - this.getRefCount());
                 this.release();
             }
         }
     }
 
+    /**
+     * 释放资源
+     */
     public void release() {
+        // 当前引用数减一
         long value = this.refCount.decrementAndGet();
+        // 引用数仍大于0，还有其他在使用，先不做清理
         if (value > 0)
             return;
 
+        // 没有其他在引用该文件
         synchronized (this) {
 
+            // 清除掉文件
             this.cleanupOver = this.cleanup(value);
         }
     }
@@ -77,6 +91,10 @@ public abstract class ReferenceResource {
 
     public abstract boolean cleanup(final long currentRef);
 
+    /**
+     * 文件是否已经被清除
+     * @return
+     */
     public boolean isCleanupOver() {
         return this.refCount.get() <= 0 && this.cleanupOver;
     }

@@ -131,6 +131,12 @@ public class MixAll {
         return 0;
     }
 
+    /**
+     * 将str持久化到fileName
+     * @param str
+     * @param fileName
+     * @throws IOException
+     */
     public static void string2File(final String str, final String fileName) throws IOException {
 
         String tmpFile = fileName + ".tmp";
