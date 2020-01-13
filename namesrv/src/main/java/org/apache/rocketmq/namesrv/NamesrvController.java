@@ -67,10 +67,7 @@ public class NamesrvController {
         this.kvConfigManager = new KVConfigManager(this);
         this.routeInfoManager = new RouteInfoManager();
         this.brokerHousekeepingService = new BrokerHousekeepingService(this);
-        this.configuration = new Configuration(
-            log,
-            this.namesrvConfig, this.nettyServerConfig
-        );
+        this.configuration = new Configuration(log, this.namesrvConfig, this.nettyServerConfig);
         this.configuration.setStorePathFromConfig(this.namesrvConfig, "configStorePath");
     }
 

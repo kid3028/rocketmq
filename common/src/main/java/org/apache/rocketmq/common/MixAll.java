@@ -97,6 +97,12 @@ public class MixAll {
         return wsAddr;
     }
 
+    /**
+     * 根据当前消费组构建一个对应的重试主题
+     * %RETRY% + consumerGroup
+     * @param consumerGroup
+     * @return
+     */
     public static String getRetryTopic(final String consumerGroup) {
         return RETRY_GROUP_TOPIC_PREFIX + consumerGroup;
     }
@@ -113,6 +119,13 @@ public class MixAll {
         return DLQ_GROUP_TOPIC_PREFIX + consumerGroup;
     }
 
+    /**
+     * 获取broker VIP端口地址
+     * 普通端口 - 2（默认10911 - 2）
+     * @param isChange
+     * @param brokerAddr
+     * @return
+     */
     public static String brokerVIPChannel(final boolean isChange, final String brokerAddr) {
         if (isChange) {
             String[] ipAndPort = brokerAddr.split(":");

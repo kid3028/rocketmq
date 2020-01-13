@@ -567,6 +567,7 @@ public class MQClientInstance {
         }
 
         if (!this.brokerAddrTable.isEmpty()) {
+            // 累计发送心跳次数
             long times = this.sendHeartbeatTimesTotal.getAndIncrement();
             // Map<brokerName, Map<brokerId, brokerAddr>>
             Iterator<Entry<String, HashMap<Long, String>>> it = this.brokerAddrTable.entrySet().iterator();
@@ -595,6 +596,7 @@ public class MQClientInstance {
                                     this.brokerVersionTable.put(brokerName, new HashMap<String, Integer>(4));
                                 }
                                 this.brokerVersionTable.get(brokerName).put(addr, version);
+                                // 每发20次，打印一次日志
                                 if (times % 20 == 0) {
                                     log.info("send heart beat to broker[{} {} {}] success", brokerName, id, addr);
                                     log.info(heartbeatData.toString());
@@ -623,7 +625,9 @@ public class MQClientInstance {
         while (it.hasNext()) {
             Entry<String, MQConsumerInner> next = it.next();
             MQConsumerInner consumer = next.getValue();
+            // 消息拉取 push
             if (ConsumeType.CONSUME_PASSIVELY == consumer.consumeType()) {
+                // 消息订阅
                 Set<SubscriptionData> subscriptions = consumer.subscriptions();
                 for (SubscriptionData sub : subscriptions) {
                     // 不空则，上传过滤文件信息到FilterServer
@@ -751,7 +755,7 @@ public class MQClientInstance {
     private HeartbeatData prepareHeartbeatData() {
         HeartbeatData heartbeatData = new HeartbeatData();
 
-        // clientID
+        // clientID = IP@PID
         heartbeatData.setClientID(this.clientId);
 
         // Consumer
@@ -760,9 +764,13 @@ public class MQClientInstance {
             if (impl != null) {
                 ConsumerData consumerData = new ConsumerData();
                 consumerData.setGroupName(impl.groupName());
+                // 拉稀获取方式 pull push
                 consumerData.setConsumeType(impl.consumeType());
+                // 消费模式 cluster broadcast
                 consumerData.setMessageModel(impl.messageModel());
+                // 从哪里开始消费
                 consumerData.setConsumeFromWhere(impl.consumeFromWhere());
+                // 订阅表达式
                 consumerData.getSubscriptionDataSet().addAll(impl.subscriptions());
                 consumerData.setUnitMode(impl.isUnitMode());
 

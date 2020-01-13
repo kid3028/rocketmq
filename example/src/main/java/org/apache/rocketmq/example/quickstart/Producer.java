@@ -46,6 +46,12 @@ public class Producer {
          */
         producer.setNamesrvAddr("127.0.0.1:9876");
 
+//        producer.getDefaultMQProducerImpl().registerCheckForbiddenHook();
+//        producer.getDefaultMQProducerImpl().registerSendMessageHook();
+//        producer.getDefaultMQProducerImpl().executeCheckForbiddenHook();
+//        producer.getDefaultMQProducerImpl().executeSendMessageHookBefore();
+//        producer.getDefaultMQProducerImpl().executeSendMessageHookAfter();
+
         /*
          * Launch the instance.
          */

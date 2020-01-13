@@ -25,10 +25,22 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class MessageClientIDSetter {
     private static final String TOPIC_KEY_SPLITTER = "#";
+    /**
+     * 16
+     */
     private static final int LEN;
+    /**
+     * AC100198368418B4AAC2
+     */
     private static final String FIX_STRING;
     private static final AtomicInteger COUNTER;
+    /**
+     * xxxx-xx-01 00:00:00
+     */
     private static long startTime;
+    /**
+     * xxxx-(xx+1)-01 00:00:00
+     */
     private static long nextStartTime;
 
     static {
@@ -124,6 +136,10 @@ public class MessageClientIDSetter {
         return buffer.array();
     }
 
+    /**
+     * 设置msgId
+     * @param msg
+     */
     public static void setUniqID(final Message msg) {
         if (msg.getProperty(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX) == null) {
             msg.putProperty(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX, createUniqID());

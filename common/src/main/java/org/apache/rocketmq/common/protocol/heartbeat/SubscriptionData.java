@@ -45,7 +45,7 @@ public class SubscriptionData implements Comparable<SubscriptionData> {
     private Set<Integer> codeSet = new HashSet<Integer>();
     // 版本
     private long subVersion = System.currentTimeMillis();
-    // 订阅表达式，默认TAG
+    // 订阅表达式（TAG/SQL92），默认TAG
     private String expressionType = ExpressionType.TAG;
 
     @JSONField(serialize = false)

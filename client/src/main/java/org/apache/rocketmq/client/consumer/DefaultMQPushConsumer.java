@@ -63,6 +63,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     protected final transient DefaultMQPushConsumerImpl defaultMQPushConsumerImpl;
 
     /**
+     * 相同角色的consumer拥有相同的订阅和消费组以达到负载均衡效果，且group name需要JVM全局唯一
      * Consumers of the same role is required to have exactly same subscriptions and consumerGroup to correctly achieve
      * load balance. It's required and needs to be globally unique.
      * </p>
@@ -72,6 +73,9 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     private String consumerGroup;
 
     /**
+     * 消费方式
+     * BROADCASTING：广播
+     * CLUSTERING：集群
      * Message model defines the way how messages are delivered to each consumer clients.
      * </p>
      *
@@ -86,6 +90,15 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     private MessageModel messageModel = MessageModel.CLUSTERING;
 
     /**
+     * 当consumer启动时从哪里开始消费
+     * CONSUME_FROM_LAST_OFFSET：从上一次消费到的位置继续消费。当一个consumer启动时，需要根据消费组的年龄来判断，主要有两种情况：
+     *    1、如果消费组是刚创建的，最早的能被订阅的消息还没有过期，那么意味着消费者确实是刚创建，需要从头开始消费
+     *    2.如果最早的能被订阅的消息已经过期，那么从最近的消息开始消费，也就意味着在启动之前的消息将会被忽略
+     *
+     * CONSUME_FROM_FIRST_OFFSET：从最早的消息开始消费
+     *
+     * CONSUME_FROM_TIMESTAMP：从指定时间戳的消息开始消费
+     *
      * Consuming point on consumer booting.
      * </p>
      *
@@ -119,6 +132,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     private ConsumeFromWhere consumeFromWhere = ConsumeFromWhere.CONSUME_FROM_LAST_OFFSET;
 
     /**
+     * 消费回溯精确到秒， 格式yyyMMddHHmmss，默认回溯到半小时前
      * Backtracking consumption time with second precision. Time format is
      * 20131223171201<br>
      * Implying Seventeen twelve and 01 seconds on December 23, 2013 year<br>
@@ -127,6 +141,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     private String consumeTimestamp = UtilAll.timeMillisToHumanString3(System.currentTimeMillis() - (1000 * 60 * 30));
 
     /**
+     * 消费队列分配策略
      * Queue allocation algorithm specifying how message queues are allocated to each consumer clients.
      */
     private AllocateMessageQueueStrategy allocateMessageQueueStrategy;
@@ -138,6 +153,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     private Map<String /* topic */, String /* sub expression */> subscription = new HashMap<String, String>();
 
     /**
+     * 消息监听器
      * Message listener
      */
     private MessageListener messageListener;
@@ -148,11 +164,13 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     private OffsetStore offsetStore;
 
     /**
+     * 并行消费最小线程数20
      * Minimum consumer thread number
      */
     private int consumeThreadMin = 20;
 
     /**
+     * 并行消费最大线程数64
      * Max consumer thread number
      */
     private int consumeThreadMax = 64;
@@ -183,8 +201,11 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     private int pullThresholdSizeForQueue = 100;
 
     /**
+     * topic级别的流控，默认值-1，不进行流控
      * Flow control threshold on topic level, default value is -1(Unlimited)
      * <p>
+     *  如果@code pullThresholdForTopic}值大于0，那么将从topic级别进行流控，并且 {@code pullThresholdForQueue} 将会基于{@code pullThresholdForTopic}重写
+     *  例如 pullThresholdForTopic =  1000 ， queueNum = 10，--> pullThresholdForQueue = 1000 / 10 = 100
      * The value of {@code pullThresholdForQueue} will be overwrote and calculated based on
      * {@code pullThresholdForTopic} if it is't unlimited
      * <p>
@@ -220,6 +241,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     private int pullBatchSize = 32;
 
     /**
+     * 是否在每次拉取消息时更新订阅关系
      * Whether update subscription relationship when every pull
      */
     private boolean postSubscriptionWhenPull = false;
@@ -230,6 +252,8 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     private boolean unitMode = false;
 
     /**
+     * 最大重复消费次数，默认值-1，即最大重试16次。
+     * 如果重复消费{@link #maxReconsumeTimes}仍没有成功，则将消息投入死信队列
      * Max re-consume times. -1 means 16 times.
      * </p>
      *
@@ -279,6 +303,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     }
 
     /**
+     * 创建一个消费者，默认使用平均消费算法分配消费队列
      * Constructor specifying consumer group.
      *
      * @param consumerGroup Consumer group.
@@ -361,6 +386,13 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
         return consumeFromWhere;
     }
 
+    /**
+     * 指定从哪里开始消费
+     * CONSUME_FROM_LAST_OFFSET
+     * CONSUME_FROM_FIRST_OFFSET
+     * CONSUME_FROM_TIMESTAMP
+     * @param consumeFromWhere
+     */
     public void setConsumeFromWhere(ConsumeFromWhere consumeFromWhere) {
         this.consumeFromWhere = consumeFromWhere;
     }
@@ -513,6 +545,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     }
 
     /**
+     * 启动消费者
      * This method gets internal infrastructure readily to serve. Instances must call this method after configuration.
      *
      * @throws MQClientException if there is any client error.
@@ -561,9 +594,13 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     }
 
     /**
+     * 订阅主题
+     * 订阅表达式
+     *     "tag1 || tag2 || tag3"
+     *     null、* 标识订阅全部
      * Subscribe a topic to consuming subscription.
      *
-     * @param topic topic to subscribe.
+     * @param topic topic to subscribe. 主题
      * @param subExpression subscription expression.it only support or operation such as "tag1 || tag2 || tag3" <br>
      * if null or * expression,meaning subscribe all
      * @throws MQClientException if there is any client error.

@@ -126,6 +126,10 @@ public class ClientConfig {
         return namesrvAddr;
     }
 
+    /**
+     * 客户端（producer、consumer）设置namesrv
+     * @param namesrvAddr
+     */
     public void setNamesrvAddr(String namesrvAddr) {
         this.namesrvAddr = namesrvAddr;
     }

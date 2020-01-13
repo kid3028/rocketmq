@@ -524,6 +524,10 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
         return this.mQClientFactory.getMQAdminImpl().queryMessageByUniqKey(topic, uniqKey);
     }
 
+    /**
+     * 注册消息监听
+     * @param messageListener
+     */
     public void registerMessageListener(MessageListener messageListener) {
         this.messageListenerInner = messageListener;
     }
@@ -916,8 +920,13 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
         }
     }
 
+    /**
+     * 复制DefaultMQPushConsumerImpl下订阅规则到RebalanceImpl下，并创建重试Topic，且添加到RebalanceImpl的订阅规则中
+     * @throws MQClientException
+     */
     private void copySubscription() throws MQClientException {
         try {
+            // topic --> subscription
             Map<String, String> sub = this.defaultMQPushConsumer.getSubscription();
             if (sub != null) {
                 for (final Map.Entry<String, String> entry : sub.entrySet()) {
@@ -926,7 +935,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                     // 构建订阅信息
                     SubscriptionData subscriptionData = FilterAPI.buildSubscriptionData(this.defaultMQPushConsumer.getConsumerGroup(),
                         topic, subString);
-                    // 存储订阅规则
+                    // 存储订阅规则，将订阅规则同步到Rebalance
                     this.rebalanceImpl.getSubscriptionInner().put(topic, subscriptionData);
                 }
             }
@@ -939,10 +948,12 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                 case BROADCASTING:
                     break;
                 case CLUSTERING:
-                    // 添加retryTopic订阅规则，全部订阅
+                    // 添加retryTopic订阅规则，全部订阅  %RETRY%+consumerGroup
                     final String retryTopic = MixAll.getRetryTopic(this.defaultMQPushConsumer.getConsumerGroup());
+                    // SubscriptionData.SUB_ALL 订阅重试topic下的所有消息
                     SubscriptionData subscriptionData = FilterAPI.buildSubscriptionData(this.defaultMQPushConsumer.getConsumerGroup(),
                         retryTopic, SubscriptionData.SUB_ALL);
+                    // 将重试Topic添加到RebalanceImpl的订阅规则中
                     this.rebalanceImpl.getSubscriptionInner().put(retryTopic, subscriptionData);
                     break;
                 default:
@@ -975,8 +986,10 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
         try {
             SubscriptionData subscriptionData = FilterAPI.buildSubscriptionData(this.defaultMQPushConsumer.getConsumerGroup(),
                 topic, subExpression);
+            // 添加进map缓存   topic --> subscriptionData
             this.rebalanceImpl.getSubscriptionInner().put(topic, subscriptionData);
             if (this.mQClientFactory != null) {
+                // 向broker发送心跳
                 this.mQClientFactory.sendHeartbeatToAllBrokerWithLock();
             }
         } catch (Exception e) {

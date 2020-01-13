@@ -16,12 +16,13 @@
  */
 package org.apache.rocketmq.client.impl.producer;
 
-import java.util.ArrayList;
-import java.util.List;
 import org.apache.rocketmq.client.common.ThreadLocalIndex;
 import org.apache.rocketmq.common.message.MessageQueue;
 import org.apache.rocketmq.common.protocol.route.QueueData;
 import org.apache.rocketmq.common.protocol.route.TopicRouteData;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public class TopicPublishInfo {
     private boolean orderTopic = false;
@@ -66,7 +67,13 @@ public class TopicPublishInfo {
         this.haveTopicRouterInfo = haveTopicRouterInfo;
     }
 
+    /**
+     * 选择一个队列进行消息发送
+     * @param lastBrokerName
+     * @return
+     */
     public MessageQueue selectOneMessageQueue(final String lastBrokerName) {
+        // 如果上次发送消息的broker为空，则threadLocalIndex随机生成一个值，然后对queue数量取模，得到此次发送消息的队列
         if (lastBrokerName == null) {
             return selectOneMessageQueue();
         } else {
@@ -84,6 +91,10 @@ public class TopicPublishInfo {
         }
     }
 
+    /**
+     * 随机生成一个数，然后对队列数量进行取模，以获得发送消息的队列
+     * @return
+     */
     public MessageQueue selectOneMessageQueue() {
         int index = this.sendWhichQueue.getAndIncrement();
         int pos = Math.abs(index) % this.messageQueueList.size();

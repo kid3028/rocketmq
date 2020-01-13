@@ -388,9 +388,9 @@ public class MessageDecoder {
                 final String value = entry.getValue();
 
                 sb.append(name);
-                sb.append(NAME_VALUE_SEPARATOR);
+                sb.append(NAME_VALUE_SEPARATOR);// ASCII 码 []
                 sb.append(value);
-                sb.append(PROPERTY_SEPARATOR);
+                sb.append(PROPERTY_SEPARATOR); // ASCII 码 []
             }
         }
         return sb.toString();

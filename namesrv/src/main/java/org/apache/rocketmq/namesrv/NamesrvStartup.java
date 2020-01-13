@@ -138,8 +138,10 @@ public class NamesrvStartup {
         JoranConfigurator configurator = new JoranConfigurator();
         configurator.setContext(lc);
         lc.reset();
+        // 读取日志配置文件
         configurator.doConfigure(namesrvConfig.getRocketmqHome() + "/conf/logback_namesrv.xml");
 
+        // 拿取一个日志logger
         log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
         // 打印namesrvConfig和nettyServerConfig
         MixAll.printObjectProperties(log, namesrvConfig);

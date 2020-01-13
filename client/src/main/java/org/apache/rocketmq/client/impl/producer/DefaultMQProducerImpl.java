@@ -725,6 +725,20 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         }
     }
 
+    /**
+     * 发送消息核心方法
+     * @param msg 消息
+     * @param mq 接收消息的队列
+     * @param communicationMode SYNC  ASYNC ONEWAY
+     * @param sendCallback 异步发送回调函数
+     * @param topicPublishInfo  topic信息
+     * @param timeout 超时时间
+     * @return
+     * @throws MQClientException
+     * @throws RemotingException
+     * @throws MQBrokerException
+     * @throws InterruptedException
+     */
     private SendResult sendKernelImpl(final Message msg,
                                       final MessageQueue mq,
                                       final CommunicationMode communicationMode,
@@ -746,15 +760,19 @@ public class DefaultMQProducerImpl implements MQProducerInner {
              * 是否使用broker vip通道，broker会开启两个端口对外提供服务
              * 默认启动VIP通道
              * broker启动时会开启两个端口接收客户端数据，其中一个端口只接受producer消息， 不接受consumer的拉取请求，被称为VIP通道
+             *
+             * 10911 普通端口
+             * 10909 VIP端口
              */
             brokerAddr = MixAll.brokerVIPChannel(this.defaultMQProducer.isSendMessageWithVIPChannel(), brokerAddr);
 
             // 记录消息内容，下面逻辑可能改变消息内容，例如消息压缩
             byte[] prevBody = msg.getBody();
             try {
+                // 如果不是批量消息，则为消息生成msgId
                 //for MessageBatch,ID has been set in the generating process
                 if (!(msg instanceof MessageBatch)) {
-                    MessageClientIDSetter.setUniqID(msg); // 设置唯一编号
+                    MessageClientIDSetter.setUniqID(msg); // 设置唯一编号msgId
                 }
                 // 消息压缩，如果消息body过长，则压缩并设置标识位 4k开始压缩
                 int sysFlag = 0;
@@ -764,13 +782,13 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                     msgBodyCompressed = true;
                 }
                 // 事务 事务消息与普通消息的sysFlag不同
-                final String tranMsg = msg.getProperty(MessageConst.PROPERTY_TRANSACTION_PREPARED);
+                final String tranMsg = msg.getProperty(MessageConst.PROPERTY_TRANSACTION_PREPARED); // 事务消息才有该属性
                 if (tranMsg != null && Boolean.parseBoolean(tranMsg)) {
-                    sysFlag |= MessageSysFlag.TRANSACTION_PREPARED_TYPE;
+                    sysFlag |= MessageSysFlag.TRANSACTION_PREPARED_TYPE; // 事务类型 prepare commit rollback
                 }
 
                 // hook发送消息前的校验
-                if (hasCheckForbiddenHook()) {
+                if (hasCheckForbiddenHook()) { // 执行ForbiddenHook
                     CheckForbiddenContext checkForbiddenContext = new CheckForbiddenContext();
                     checkForbiddenContext.setNameSrvAddr(this.defaultMQProducer.getNamesrvAddr());
                     checkForbiddenContext.setGroup(this.defaultMQProducer.getProducerGroup());
@@ -782,7 +800,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                     this.executeCheckForbiddenHook(checkForbiddenContext);
                 }
                 // hook发送消息前逻辑
-                if (this.hasSendMessageHook()) {
+                if (this.hasSendMessageHook()) { // 执行发送消息前Hook
                     context = new SendMessageContext();
                     context.setProducer(this);
                     context.setProducerGroup(this.defaultMQProducer.getProducerGroup());
@@ -806,7 +824,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                 SendMessageRequestHeader requestHeader = new SendMessageRequestHeader();
                 requestHeader.setProducerGroup(this.defaultMQProducer.getProducerGroup());
                 requestHeader.setTopic(msg.getTopic());
-                requestHeader.setDefaultTopic(this.defaultMQProducer.getCreateTopicKey());
+                requestHeader.setDefaultTopic(this.defaultMQProducer.getCreateTopicKey()); // AUTO_CREATE_TOPIC_KEY
                 requestHeader.setDefaultTopicQueueNums(this.defaultMQProducer.getDefaultTopicQueueNums());
                 requestHeader.setQueueId(mq.getQueueId());
                 requestHeader.setSysFlag(sysFlag);
@@ -816,7 +834,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                 requestHeader.setReconsumeTimes(0);
                 requestHeader.setUnitMode(this.isUnitMode());
                 requestHeader.setBatch(msg instanceof MessageBatch);
-                // 要求重新发送的消息，设置重试次数进而延时时间
+                // 要求重新发送的消息，设置重试次数进而延时时间, topic标识 %RETRY%
                 if (requestHeader.getTopic().startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
                     String reconsumeTimes = MessageAccessor.getReconsumeTime(msg);
                     if (reconsumeTimes != null) {
@@ -941,11 +959,11 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         return false;
     }
 
-    public boolean hasCheckForbiddenHook() {
+    public boolean hasCheckForbiddenHook() { // 是否有ForbiddenHook
         return !checkForbiddenHookList.isEmpty();
     }
 
-    public void executeCheckForbiddenHook(final CheckForbiddenContext context) throws MQClientException {
+    public void executeCheckForbiddenHook(final CheckForbiddenContext context) throws MQClientException { // 执行ForbiddenHook
         if (hasCheckForbiddenHook()) {
             for (CheckForbiddenHook hook : checkForbiddenHookList) {
                 hook.checkForbidden(context);

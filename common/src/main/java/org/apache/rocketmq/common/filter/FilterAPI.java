@@ -41,7 +41,8 @@ public class FilterAPI {
      * 构建SubscriptionData TAG
      * @param consumerGroup
      * @param topic
-     * @param subString
+     * @param subString 如果等于 * 或者空串，表示订阅全部
+     *                  按照 || 进行拆分，分别将原tag、原tag.hashcode存储到两个set集合中
      * @return
      * @throws Exception
      */

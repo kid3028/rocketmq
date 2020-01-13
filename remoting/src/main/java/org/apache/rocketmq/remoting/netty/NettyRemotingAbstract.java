@@ -415,7 +415,7 @@ public abstract class NettyRemotingAbstract {
             // responseFuture用于异步获取处理结果
             final ResponseFuture responseFuture = new ResponseFuture(channel, opaque, timeoutMillis, null, null);
             this.responseTable.put(opaque, responseFuture);
-            final SocketAddress addr = channel.remoteAddress();
+            final SocketAddress addr = channel.remoteAddress();  //  /172.16.1.152:10909
             channel.writeAndFlush(request).addListener(new ChannelFutureListener() {
                 @Override
                 public void operationComplete(ChannelFuture f) throws Exception {
