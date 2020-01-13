@@ -58,6 +58,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * 生产者组在概念上吧具有完全相同的角色的生产者聚合在一起，这一点对于涉及事务消息时是非常重要的。
+     * 因为消息服务器在回查事务状态时会随机选择改组中任何一个生产者发起事务回查请求
      * Producer group conceptually aggregates all producer instances of exactly same role, which is particularly
      * important when transactional messages are involved.
      * </p>
@@ -82,7 +83,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     private volatile int defaultTopicQueueNums = 4;
 
     /**
-     * 默认延迟
+     * 消息发送默认超时时间
      * Timeout for sending messages.
      */
     private int sendMsgTimeout = 3000;
@@ -498,10 +499,10 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     /**
      * Create a topic on broker.
      *
-     * @param key accesskey
-     * @param newTopic topic name
-     * @param queueNum topic's queue number
-     * @param topicSysFlag topic system flag
+     * @param key accesskey 目前没有实际作用
+     * @param newTopic topic name 主题
+     * @param queueNum topic's queue number 队列数量
+     * @param topicSysFlag topic system flag 主题系统标签，默认为0
      * @throws MQClientException if there is any client error.
      */
     @Override
@@ -511,6 +512,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Search consume queue offset of the given time stamp.
+     * 根据时间戳从队列中查找其偏移量
      *
      * @param mq Instance of MessageQueue
      * @param timestamp from when in milliseconds.
@@ -524,6 +526,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Query maximum offset of the given message queue.
+     * 查找该消息队列中最大的物理偏移量
      *
      * @param mq Instance of MessageQueue
      * @return maximum offset of the given consume queue.
@@ -536,6 +539,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Query minimum offset of the given message queue.
+     * 查找该消息队列中最小的物理偏移量
      *
      * @param mq Instance of MessageQueue
      * @return minimum offset of the given message queue.
@@ -548,6 +552,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Query earliest message store time.
+     * 查询队列最早消息存储时间
      *
      * @param mq Instance of MessageQueue
      * @return earliest message store time.
@@ -559,29 +564,14 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     }
 
     /**
-     * Query message of the given offset message ID.
-     *
-     * @param offsetMsgId message id
-     * @return Message specified.
-     * @throws MQBrokerException if there is any broker error.
-     * @throws MQClientException if there is any client error.
-     * @throws RemotingException if there is any network-tier error.
-     * @throws InterruptedException if the sending thread is interrupted.
-     */
-    @Override
-    public MessageExt viewMessage(
-        String offsetMsgId) throws RemotingException, MQBrokerException, InterruptedException, MQClientException {
-        return this.defaultMQProducerImpl.viewMessage(offsetMsgId);
-    }
-
-    /**
      * Query message by key.
+     * 根据条件查询消息
      *
-     * @param topic message topic
-     * @param key message key index word
-     * @param maxNum max message number
-     * @param begin from when
-     * @param end to when
+     * @param topic message topic 主题
+     * @param key message key index word 消息索引key
+     * @param maxNum max message number 本次最多取出多少消息
+     * @param begin from when 开始时间
+     * @param end to when 结束时间
      * @return QueryResult instance contains matched messages.
      * @throws MQClientException if there is any client error.
      * @throws InterruptedException if the thread is interrupted.
@@ -593,7 +583,25 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     }
 
     /**
+     * Query message of the given offset message ID.
+     * 根据消息偏移量查询消息
+     *
+     * @param offsetMsgId message id
+     * @return Message specified.
+     * @throws MQBrokerException if there is any broker error.
+     * @throws MQClientException if there is any client error.
+     * @throws RemotingException if there is any network-tier error.
+     * @throws InterruptedException if the sending thread is interrupted.
+     */
+    @Override
+    public MessageExt viewMessage(
+            String offsetMsgId) throws RemotingException, MQBrokerException, InterruptedException, MQClientException {
+        return this.defaultMQProducerImpl.viewMessage(offsetMsgId);
+    }
+
+    /**
      * Query message of the given message ID.
+     * 根据主题和msgId查询消息
      *
      * @param topic Topic
      * @param msgId Message ID

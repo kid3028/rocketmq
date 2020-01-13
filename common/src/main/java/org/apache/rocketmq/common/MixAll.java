@@ -36,7 +36,9 @@ public class MixAll {
 
     public static final String ROCKETMQ_HOME_ENV = "ROCKETMQ_HOME";
     public static final String ROCKETMQ_HOME_PROPERTY = "rocketmq.home.dir";
+    // namesrv地址 环境变量
     public static final String NAMESRV_ADDR_ENV = "NAMESRV_ADDR";
+    // namesrv地址 系统属性
     public static final String NAMESRV_ADDR_PROPERTY = "rocketmq.namesrv.addr";
     public static final String MESSAGE_COMPRESS_LEVEL = "rocketmq.message.compressLevel";
     public static final String DEFAULT_NAMESRV_ADDR_LOOKUP = "jmenv.tbsite.net";
@@ -44,13 +46,16 @@ public class MixAll {
     public static final String WS_DOMAIN_SUBGROUP = System.getProperty("rocketmq.namesrv.domain.subgroup", "nsaddr");
     //http://jmenv.tbsite.net:8080/rocketmq/nsaddr
     //public static final String WS_ADDR = "http://" + WS_DOMAIN_NAME + ":8080/rocketmq/" + WS_DOMAIN_SUBGROUP;
+    // 默认topicKey
     public static final String AUTO_CREATE_TOPIC_KEY_TOPIC = "AUTO_CREATE_TOPIC_KEY"; // Will be created at broker when isAutoCreateTopicEnable
     public static final String BENCHMARK_TOPIC = "BenchmarkTest";
+    // 默认生产者组
     public static final String DEFAULT_PRODUCER_GROUP = "DEFAULT_PRODUCER";
     public static final String DEFAULT_CONSUMER_GROUP = "DEFAULT_CONSUMER";
     public static final String TOOLS_CONSUMER_GROUP = "TOOLS_CONSUMER";
     public static final String FILTERSRV_CONSUMER_GROUP = "FILTERSRV_CONSUMER";
     public static final String MONITOR_CONSUMER_GROUP = "__MONITOR_CONSUMER";
+    // 系统内部使用producer group
     public static final String CLIENT_INNER_PRODUCER_GROUP = "CLIENT_INNER_PRODUCER";
     public static final String SELF_TEST_PRODUCER_GROUP = "SELF_TEST_P_GROUP";
     public static final String SELF_TEST_CONSUMER_GROUP = "SELF_TEST_C_GROUP";

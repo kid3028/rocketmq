@@ -19,9 +19,13 @@ package org.apache.rocketmq.common.message;
 import java.util.HashSet;
 
 public class MessageConst {
+    // key
     public static final String PROPERTY_KEYS = "KEYS";
+    // tag
     public static final String PROPERTY_TAGS = "TAGS";
+
     public static final String PROPERTY_WAIT_STORE_MSG_OK = "WAIT";
+    // 延迟消息等级 延迟消息和消息重试使用
     public static final String PROPERTY_DELAY_TIME_LEVEL = "DELAY";
     public static final String PROPERTY_RETRY_TOPIC = "RETRY_TOPIC";
     public static final String PROPERTY_REAL_TOPIC = "REAL_TOPIC";
@@ -47,6 +51,10 @@ public class MessageConst {
 
     public static final String KEY_SEPARATOR = " ";
 
+    /**
+     * 系统属性
+     * producer构建消息时可以在扩展属性中添加下面的属性
+     */
     public static final HashSet<String> STRING_HASH_SET = new HashSet<String>();
 
     static {

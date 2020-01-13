@@ -99,6 +99,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
     private final RPCHook rpcHook;
     protected BlockingQueue<Runnable> checkRequestQueue;
     protected ExecutorService checkExecutor;
+    // producer启动状态  CREATE_JUST:刚创建还没有启动 RUNNING: 运行中 SHUTDOWN_ALREADY:已关闭  START_FAILED 启动失败
     private ServiceState serviceState = ServiceState.CREATE_JUST;
     private MQClientInstance mQClientFactory;
     private ArrayList<CheckForbiddenHook> checkForbiddenHookList = new ArrayList<CheckForbiddenHook>();
@@ -176,9 +177,10 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                     this.defaultMQProducer.changeInstanceNameToPID();
                 }
 
-                // 初始化MQClientInstance，一个进程只会存在一个MQClientInstance，设置clientId(IP@PID)
+                // 初始化MQClientInstance，一个进程只会存在一个MQClientInstance(也就是即使存在不同组的producer、consumer，也只会有一个MQClientInstance实例)，设置clientId(IP@PID)
                 this.mQClientFactory = MQClientManager.getInstance().getAndCreateMQClientInstance(this.defaultMQProducer, rpcHook);
                 // 将当前producer注册进MQClientInstance，保证一个producerName值对应一个producer
+                // producerGroup --> producer
                 boolean registerOK = mQClientFactory.registerProducer(this.defaultMQProducer.getProducerGroup(), this);
                 if (!registerOK) {
                     this.serviceState = ServiceState.CREATE_JUST;

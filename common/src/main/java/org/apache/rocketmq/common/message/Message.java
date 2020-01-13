@@ -22,12 +22,20 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 
+
+/**
+ * 消息封装类
+ */
 public class Message implements Serializable {
     private static final long serialVersionUID = 8445773977080406428L;
 
+    // 主题
     private String topic;
+    // 消息flag
     private int flag;
+    // 扩展属性
     private Map<String, String> properties;
+    // 消息体
     private byte[] body;
     private String transactionId;
 
@@ -38,6 +46,15 @@ public class Message implements Serializable {
         this(topic, "", "", 0, body, true);
     }
 
+    /**
+     *
+     * @param topic
+     * @param tags 消息tag，用于消息过滤
+     * @param keys message索引键，mq可以根据key快速索引到消息
+     * @param flag
+     * @param body 消息体
+     * @param waitStoreMsgOK 消息发送时是否等消息存储存储完之后再返回
+     */
     public Message(String topic, String tags, String keys, int flag, byte[] body, boolean waitStoreMsgOK) {
         this.topic = topic;
         this.flag = flag;

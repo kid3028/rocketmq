@@ -233,7 +233,7 @@ public class MQClientInstance {
                         this.mQClientAPIImpl.fetchNameServerAddr();
                     }
                     // Start request-response channel
-                    // 启动MQClientAPIImpl，初始化NettyClient
+                    // 启动MQClientAPIImpl，初始化NettyClient,只是完成对Bootstrap的设置初始化，并没有和远程server建立连接
                     this.mQClientAPIImpl.start();
                     // Start various schedule tasks
                     /**
@@ -279,7 +279,7 @@ public class MQClientInstance {
     }
 
     private void startScheduledTask() {
-        // 定时拉取NameServer地址
+        // 定时拉取NameServer地址(如果NameServer是通过http服务拉取的情况)
         if (null == this.clientConfig.getNamesrvAddr()) {
             this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
@@ -662,7 +662,7 @@ public class MQClientInstance {
                     if (isDefault && defaultMQProducer != null) {
                         // 从nameserver获取topic的路由信息，nameserver从topicQueueTable获取到该topic对应的所有queueData，然后将每个brokerName下的BrokerData返回
                         topicRouteData = this.mQClientAPIImpl.getDefaultTopicRouteInfoFromNameServer(defaultMQProducer.getCreateTopicKey(),
-                            1000 * 3);
+                            100000 * 3);
                         if (topicRouteData != null) {
                             // 遍历从nameserver获取到topic路由信息
                             for (QueueData data : topicRouteData.getQueueDatas()) {
@@ -674,7 +674,7 @@ public class MQClientInstance {
                         }
                     } else {
                         // 从NameServer获取topic路由信息
-                        topicRouteData = this.mQClientAPIImpl.getTopicRouteInfoFromNameServer(topic, 1000 * 3);
+                        topicRouteData = this.mQClientAPIImpl.getTopicRouteInfoFromNameServer(topic, 100000 * 3);
                     }
                     if (topicRouteData != null) {
                         TopicRouteData old = this.topicRouteTable.get(topic);
