@@ -1728,6 +1728,10 @@ public class DefaultMessageStore implements MessageStore {
         }
     }
 
+    /**
+     * 将commitLog中数据更新到ConsumeQueue中
+     * @param dispatchRequest
+     */
     public void putMessagePositionInfo(DispatchRequest dispatchRequest) {
         // 找到对应的ConsumeQueue文件。consumeQueue的数据存储结构，每个topicId + queueId对应一个ConsumeQueue，每个ConsumeQueue包含了一系列MappedFile。如果不存在ConsumeQueue就会新建一个
         ConsumeQueue cq = this.findConsumeQueue(dispatchRequest.getTopic(), dispatchRequest.getQueueId());
@@ -2172,13 +2176,16 @@ public class DefaultMessageStore implements MessageStore {
                     break;
                 }
 
-                // 从上次的结束offset开始读取commitLog文件中的消息。
+                // 返回从reputFromOffset偏移量开始的全部有效数据（commitlog文件）。然后循环读取每一条消息
                 SelectMappedBufferResult result = DefaultMessageStore.this.commitLog.getData(reputFromOffset);
                 if (result != null) {
                     try {
                         // 开始处理位置
                         this.reputFromOffset = result.getStartOffset();
 
+
+                        // 从result返回的ByteBuffer中循环读取消息，一次读取一条，创建DispatcherRequest对象，如果消息长度大于0，则调用doDispatch方法，
+                        // 最终将分别调用CommitLogDispatcherBuildConsumerQueue、CommitLogDispatcherBuildIndex
                         // result.getSize() 最大可读字节数
                         for (int readSize = 0; readSize < result.getSize() && doNext; ) {
                             // 检查message数据完整性并封装成DispatchRequest。

@@ -28,6 +28,13 @@ import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileChannel.MapMode;
 
+/**
+ * checkpoint文件的作用是记录CommitLog、ConsumeQueue、Index文件的刷盘时间点，文件固定长度为4k，实际只使用该文件的前面24个字节，
+ * |-----------------------------------------------------------------|
+ * | physicMsgTimestamp  | logicMsgTimestamp   | indexMsgTimestamp  |
+ * |----------------------------------------------------------------|
+ * |<-----8byte-------->|<-----8byte-------->|<---------8byte------>|
+ */
 public class StoreCheckpoint {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
     private final RandomAccessFile randomAccessFile;
@@ -49,11 +56,11 @@ public class StoreCheckpoint {
 
         if (fileExists) {
             log.info("store checkpoint file exists, " + scpPath);
-            // 物理消息时间戳
+            // 物理消息时间戳 commitlog文件刷盘时间点
             this.physicMsgTimestamp = this.mappedByteBuffer.getLong(0);
-            // 逻辑消息时间戳
+            // 逻辑消息时间戳 消息消费队列文件刷盘时间点
             this.logicsMsgTimestamp = this.mappedByteBuffer.getLong(8);
-            // index时间戳
+            // index时间戳 索引文件刷盘时间点
             this.indexMsgTimestamp = this.mappedByteBuffer.getLong(16);
 
             log.info("store checkpoint file physicMsgTimestamp " + this.physicMsgTimestamp + ", "

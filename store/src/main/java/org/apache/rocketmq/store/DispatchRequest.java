@@ -35,7 +35,7 @@ public class DispatchRequest {
     private final long consumeQueueOffset;
     // 存在在消息属性中的keys: PROPERTY_KEYS = "KEYS"
     private final String keys;
-    // 是否成功
+    // 是否成功解析到完整的消息
     private final boolean success;
     // 消息唯一键“UNIQ_KEY”
     private final String uniqKey;
@@ -46,6 +46,7 @@ public class DispatchRequest {
     private final long preparedTransactionOffset;
     // 属性
     private final Map<String, String> propertiesMap;
+    // 位图
     private byte[] bitMap;
 
     public DispatchRequest(

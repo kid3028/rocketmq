@@ -1133,9 +1133,13 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
         }
     }
 
+    /**
+     * 持久化消费进度
+     */
     @Override
     public void persistConsumerOffset() {
         try {
+            // 确保client处于RUNNING状态
             this.makeSureStateOK();
             Set<MessageQueue> mqs = new HashSet<MessageQueue>();
             Set<MessageQueue> allocateMq = this.rebalanceImpl.getProcessQueueTable().keySet();

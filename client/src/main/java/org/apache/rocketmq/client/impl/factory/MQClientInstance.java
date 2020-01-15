@@ -300,6 +300,7 @@ public class MQClientInstance {
             @Override
             public void run() {
                 try {
+                    // producerTable consumerTable
                     MQClientInstance.this.updateTopicRouteInfoFromNameServer();
                 } catch (Exception e) {
                     log.error("ScheduledTask updateTopicRouteInfoFromNameServer exception", e);
@@ -313,7 +314,9 @@ public class MQClientInstance {
             @Override
             public void run() {
                 try {
+                    // 清除已经下线的broker，如果brokerAddrTable中的addr在topicRouteInfoTable中已经不存在，则认为broker已经下线，剔除broker
                     MQClientInstance.this.cleanOfflineBroker();
+                    // 发送心跳包到所有brokerAddrTable中的broker
                     MQClientInstance.this.sendHeartbeatToAllBrokerWithLock();
                 } catch (Exception e) {
                     log.error("ScheduledTask sendHeartbeatToAllBroker exception", e);
@@ -327,6 +330,7 @@ public class MQClientInstance {
             @Override
             public void run() {
                 try {
+                    // 持久化消费进度
                     MQClientInstance.this.persistAllConsumerOffset();
                 } catch (Exception e) {
                     log.error("ScheduledTask persistAllConsumerOffset exception", e);
@@ -391,12 +395,14 @@ public class MQClientInstance {
     }
 
     /**
+     * 清理下线的broker
      * Remove offline broker
      */
     private void cleanOfflineBroker() {
         try {
             if (this.lockNamesrv.tryLock(LOCK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS))
                 try {
+                    // 临时存储存活的broker
                     ConcurrentHashMap<String, HashMap<Long, String>> updatedTable = new ConcurrentHashMap<String, HashMap<Long, String>>();
 
                     Iterator<Entry<String, HashMap<Long, String>>> itBrokerTable = this.brokerAddrTable.entrySet().iterator();
@@ -412,20 +418,25 @@ public class MQClientInstance {
                         while (it.hasNext()) {
                             Entry<Long, String> ee = it.next();
                             String addr = ee.getValue();
+                            // topic路由表中是否有broker地址为addr的存在
                             if (!this.isBrokerAddrExistInTopicRouteTable(addr)) {
+                                // 不存在，则broker已经下线
                                 it.remove();
                                 log.info("the broker addr[{} {}] is offline, remove it", brokerName, addr);
                             }
                         }
 
+                        // broker对应的地址表为空，表明broker已经下线
                         if (cloneAddrTable.isEmpty()) {
                             itBrokerTable.remove();
                             log.info("the broker[{}] name's host is offline, remove it", brokerName);
                         } else {
+                            // 更新新的broker—broker地址表
                             updatedTable.put(brokerName, cloneAddrTable);
                         }
                     }
 
+                    // 更新地址表
                     if (!updatedTable.isEmpty()) {
                         this.brokerAddrTable.putAll(updatedTable);
                     }
@@ -536,6 +547,11 @@ public class MQClientInstance {
         return updateTopicRouteInfoFromNameServer(topic, false, null);
     }
 
+    /**
+     * 判断topic路由表中是否有指定地址的broker
+     * @param addr
+     * @return
+     */
     private boolean isBrokerAddrExistInTopicRouteTable(final String addr) {
         Iterator<Entry<String, TopicRouteData>> it = this.topicRouteTable.entrySet().iterator();
         while (it.hasNext()) {
@@ -544,6 +560,7 @@ public class MQClientInstance {
             List<BrokerData> bds = topicRouteData.getBrokerDatas();
             for (BrokerData bd : bds) {
                 if (bd.getBrokerAddrs() != null) {
+                    // 包含地址则存在
                     boolean exist = bd.getBrokerAddrs().containsValue(addr);
                     if (exist)
                         return true;
