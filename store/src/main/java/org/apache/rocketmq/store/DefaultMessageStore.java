@@ -81,7 +81,7 @@ public class DefaultMessageStore implements MessageStore {
     // CommitLog 消息详情存储，同一个Broker上的所有消息都保存在一起，每条消息保存后都会有一个offset
     private final CommitLog commitLog;
 
-    // topic消费队列
+    // topic消费队列 消息队列存储缓存表，按照消息主题分组
     private final ConcurrentMap<String/* topic */, ConcurrentMap<Integer/* queueId */, ConsumeQueue>> consumeQueueTable;
 
     // consumeQueue刷盘服务线程
@@ -99,7 +99,7 @@ public class DefaultMessageStore implements MessageStore {
     // MappedFile分配线程，RocketMQ使用内存映射处理commitLog，ConsumeQueue文件
     private final AllocateMappedFileService allocateMappedFileService;
 
-    // 重试存储消息服务
+    // commitLog消息分发，根据commitLog文件创建consumeQueue、IndexFile文件
     private final ReputMessageService reputMessageService;
 
     // 主从同步实现服务
@@ -111,7 +111,7 @@ public class DefaultMessageStore implements MessageStore {
     // 存储统计服务
     private final StoreStatsService storeStatsService;
 
-    // DataBuffer池
+    // DataBuffer池 消息堆内存缓存
     private final TransientStorePool transientStorePool;
 
     // 存储服务状态
@@ -122,13 +122,14 @@ public class DefaultMessageStore implements MessageStore {
         Executors.newSingleThreadScheduledExecutor(new ThreadFactoryImpl("StoreScheduledThread"));
     // broker统计服务
     private final BrokerStatsManager brokerStatsManager;
-    // 消息到达监听器
+    // 消息到达监听器 消息拉取长轮询模式消息到达监听器
     private final MessageArrivingListener messageArrivingListener;
+    // broker配置属性
     private final BrokerConfig brokerConfig;
 
     private volatile boolean shutdown = true;
 
-    // 检查点
+    // 文件刷盘检查点
     private StoreCheckpoint storeCheckpoint;
 
     private AtomicLong printTimes = new AtomicLong(0);
@@ -212,35 +213,37 @@ public class DefaultMessageStore implements MessageStore {
         boolean result = true;
 
         try {
-            // 判断~/store/abort文件是否存在，用于判断进程是否正常退出
+            // 判断${ROCKETMQ_HOME}/store/abort文件是否存在，用于判断进程是否正常退出
+            // Broker在启动时创建${ROCKETMQ_HOME}/store/abort文件，在退出时通过注册JVM钩子函数删除abort文件。
+            // 如果下一次启动时存在abort文件，说明broker是异常退出的。commitlog和consumequeue数据有可能不一致，需要进行修复
             boolean lastExitOK = !this.isTempFileExist();
             log.info("last shutdown {}", lastExitOK ? "normally" : "abnormally");
 
             if (null != scheduleMessageService) {
                 /**
-                 * 加载文件~/store/config/delayOffset.json
+                 * 加载文件${ROCKETMQ_HOME}/store/config/delayOffset.json
                  * 将默认的延迟时间"1s 5s 10s 30s 1m 2m 3m 4m 5m 6m 7m 8m 9m 10m 20m 30m 1h 2h"转化为对应的毫秒值
                  */
                 result = result && this.scheduleMessageService.load();
             }
 
             // load Commit Log
-            // 加载~/store.commitlog目录下的所有文件，并标记每一个文件的写位置、刷新位置、提交位置(也就是commit log文件的大小，默认1G)
+            // 加载${ROCKETMQ_HOME}/store/commitlog目录下的所有文件，并标记每一个文件的写位置、刷新位置、提交位置(也就是commit log文件的大小，默认1G)
             result = result && this.commitLog.load();
 
             // load Consume Queue
             /**
-             * 加载~/store/consumequeue目录下的所有文件
+             * 加载${ROCKETMQ_HOME}/store/consumequeue目录下的所有文件
              * 获取文件之后构建ConsumeQueue，并设置topic、queueId、ConsumeQueue三者之间的关系
              * 同样标记每一个文件的写位置、刷新位置和提交位置
              */
             result = result && this.loadConsumeQueue();
 
             if (result) {
-                // 加载~/store/checkpoint文件，主要用于确定物理消息、逻辑消息、索引消息三个时间戳
+                // 加载${ROCKETMQ_HOME}/store/checkpoint文件，主要用于确定物理消息、逻辑消息、索引消息三个时间戳
                 this.storeCheckpoint =
                     new StoreCheckpoint(StorePathConfigHelper.getStoreCheckpoint(this.messageStoreConfig.getStorePathRootDir()));
-                // 加载~/store/index目录下的索引文件
+                // 加载${ROCKETMQ_HOME}/store/index目录下的索引文件
                 this.indexService.load(lastExitOK);
                 // 文件检测恢复
                 this.recover(lastExitOK);
@@ -387,6 +390,13 @@ public class DefaultMessageStore implements MessageStore {
     /**
      * broker接收到消息之后，调用该方法存储消息
      * 首先判断broker是否是master，并且master当前是可写的。然后判断commitLog上次flush的时候是否超时，如果超时返回OS_PAGECACHE_BUSY的错误，最终调用commitlog.putMessage()方法保存消息。
+     *
+     * 1、messageStore不可写
+     * 2、当前broker是slave
+     * 3、磁盘满或者写consumeQueue、IndexFile时出现错误
+     * 4、topic长度超过了127
+     * 5、消息属性长度超过了32676
+     * 6、OSPage写忙
      * @param msg Message instance to store
      * @return
      */
@@ -1320,6 +1330,7 @@ public class DefaultMessageStore implements MessageStore {
 
     /**
      * 根据topic 和 queueId查找ConsumeQueue
+     * 如果不存在consumequeue，则新建一个加入
      * @param topic
      * @param queueId
      * @return
@@ -1617,6 +1628,10 @@ public class DefaultMessageStore implements MessageStore {
 
     /**
      * 恢复动作
+     * 根据broker是否是正常停止执行不同的恢复策略
+     * 存储启动时文件恢复工作主要完成flushedPosition、committedWhere指针的位置、消息消费队列最大偏移量加载到内存，并删除flushedPosition之后的所有文件。
+     * 如果broker异常启动，在文件恢复过程中，RocketMQ会将最后一个有效文件中的所有消息重新转发到消息消费队列与索引队列，确保消息不丢失，但是同时会带来消息重复。
+     * RocketMQ保证消息不丢失但是不保证消息不重复消费，消息消费业务方需要实现消息消费的幂等设计
      * @param lastExitOK
      */
     private void recover(final boolean lastExitOK) {
@@ -1808,6 +1823,7 @@ public class DefaultMessageStore implements MessageStore {
          */
         @Override
         public void dispatch(DispatchRequest request) {
+            // 如果messageIndexEnable设置为true，则垫佣IndexService#buildIndex构建hash索引，否则忽略背刺转发任务
             if (DefaultMessageStore.this.messageStoreConfig.isMessageIndexEnable()) {
                 DefaultMessageStore.this.indexService.buildIndex(request);
             }

@@ -37,21 +37,21 @@ public class MappedFileQueue {
 
     private static final int DELETE_FILES_BATCH_MAX = 10;
 
-    // 文件存储路径
+    // commitlog文件存储路径 ${ROCKETMQ_HOME}/store/commitlog、consumequeue文件存储路径 ${ROCKETMQ_HOME}/store/consumequeue/topic/queueId
     private final String storePath;
 
-    // 单个MappedFile文件长度
+    // 单个MappedFile文件长度，默认1G
     private final int mappedFileSize;
 
     // mappedFile集合
     private final CopyOnWriteArrayList<MappedFile> mappedFiles = new CopyOnWriteArrayList<MappedFile>();
 
-    // 创建MappedFileService
+    // 创建MappedFile服务类
     private final AllocateMappedFileService allocateMappedFileService;
 
-    // 整个刷新的偏移量，针对该MappedFileQueue
+    // 当前刷盘指针，针对该MappedFileQueue，表示该指针之前的所有数据都已经全部持久化到磁盘
     private long flushedWhere = 0;
-    // 当前提交的偏移量，针对该MappedFileQueue commit与flush的区别
+    // 当前数据提交指针，内存中ByteBuffer当前的写指针，该值大于等于flushedWhere
     private long committedWhere = 0;
 
     private volatile long storeTimestamp = 0;
@@ -126,9 +126,11 @@ public class MappedFileQueue {
     }
 
     /**
-     * 截断无效的consumequeue
-     * 再次遍历所有MappedFile，如果offset大于该consumequeue，则无需处理，设置wrotePosition、commitedPosition、flushedPostion的值即可
-     * 如果offset小于该文件最大的offset，则该文件整个删除
+     * 删除offset之后的所有文件。
+     * 遍历目录下的文件，如果文件的尾部偏移量小于offset则跳过该文件，则跳过改文件，
+     * 如果尾部的偏移量大于offset，则进一步比较offset与文件的开始偏移量，如果offset大于文件的起始偏移量，说明当前文件包含了有效偏移量，设置MappedFile的flushedPosition和committedPosition。
+     * 如果offset小于文件的起始偏移量，说明该文件是有效文件后面创建的，调用{@link MappedFile#destroy(long)}释放MappedFile占用的内存资源(内存映射与内存通道等)，然后加入到待删除文件列表中
+     * 最终调用deleteExpiredFile将文件从物理磁盘删除。
      *
      * @param offset
      */
@@ -137,12 +139,18 @@ public class MappedFileQueue {
 
         for (MappedFile file : this.mappedFiles) {
             long fileTailOffset = file.getFileFromOffset() + this.mappedFileSize;
+            // 当前文件的tailOffset < offset,说明当前文件是校验有效的，直接跳过即可
+
+            // tailOffset > offset，进一步判断
             if (fileTailOffset > offset) {
+                // offset > fileFromOffset,说明当前文件中有部分文件是有效的
                 if (offset >= file.getFileFromOffset()) {
                     file.setWrotePosition((int) (offset % this.mappedFileSize));
                     file.setCommittedPosition((int) (offset % this.mappedFileSize));
                     file.setFlushedPosition((int) (offset % this.mappedFileSize));
-                } else {
+                }
+                // 当前文件是有效文件后面创建的，调用MappedFile#destory释放MappedFile占用的内存资源(内存映射与内存通道等)，然后加入到删除文件列表
+                else {
                     file.destroy(1000);
                     willRemoveFiles.add(file);
                 }
@@ -192,7 +200,7 @@ public class MappedFileQueue {
             // ascending order
             Arrays.sort(files);
             for (File file : files) {
-
+                // 如果文件大小与配置文件的单个文件大小不一致，将忽略该目录下所有文件
                 if (file.length() != this.mappedFileSize) {
                     log.warn(file + "\t" + file.length()
                         + " length not matched message store config value, ignore it");
@@ -203,7 +211,7 @@ public class MappedFileQueue {
                     // 单个MappedFile大小默认是1G org.apache.rocketmq.store.config.MessageStoreConfig.mapedFileSizeCommitLog
                     // commitlog 1G  consumequeue 600w byte
                     MappedFile mappedFile = new MappedFile(file.getPath(), mappedFileSize);
-
+                    // 注意：这里将wrotePosition、flushPosition、committedPosition三个指针都设置为文件大小
                     mappedFile.setWrotePosition(this.mappedFileSize);
                     mappedFile.setFlushedPosition(this.mappedFileSize);
                     mappedFile.setCommittedPosition(this.mappedFileSize);
@@ -265,13 +273,15 @@ public class MappedFileQueue {
         }
 
         if (createOffset != -1 && needCreate) {
-            // 通过物理偏移量获取文件名
+            // 通过物理偏移量获取文件名 ${ROCKETMQ_HOME}/store/commitlog/offset
             String nextFilePath = this.storePath + File.separator + UtilAll.offset2FileName(createOffset);
+            // ${ROCKET_MQ}/store/commitlog/offset + (1024 * 1024 * 1024)
             String nextNextFilePath = this.storePath + File.separator
                 + UtilAll.offset2FileName(createOffset + this.mappedFileSize);
             MappedFile mappedFile = null;
 
             if (this.allocateMappedFileService != null) {
+                // 创建MappedFile
                 mappedFile = this.allocateMappedFileService.putRequestAndReturnMappedFile(nextFilePath,
                     nextNextFilePath, this.mappedFileSize);
             } else {
@@ -286,6 +296,7 @@ public class MappedFileQueue {
                 if (this.mappedFiles.isEmpty()) {
                     mappedFile.setFirstCreateInQueue(true);
                 }
+                // 加入mappedFiles
                 this.mappedFiles.add(mappedFile);
             }
 
@@ -357,10 +368,16 @@ public class MappedFileQueue {
         return true;
     }
 
+    /**
+     * 获取存储文件最小偏移量
+     * 返回最早MappedFile的物理偏移量
+     * @return
+     */
     public long getMinOffset() {
 
         if (!this.mappedFiles.isEmpty()) {
             try {
+                // 返回最早MappedFile的物理偏移量
                 return this.mappedFiles.get(0).getFileFromOffset();
             } catch (IndexOutOfBoundsException e) {
                 //continue;
@@ -379,15 +396,20 @@ public class MappedFileQueue {
         // 取到文件逻辑队列最后一个的消费位置返回给HAClient
         MappedFile mappedFile = getLastMappedFile();
         if (mappedFile != null) {
-            // 当前文件第一条消息的偏移量 + 当前最大可读取位置(当前的写位置或者提交位置)
+            // 最后一个文件第一条消息的偏移量 + 当前最大可读取位置(当前的写位置或者提交位置)
             return mappedFile.getFileFromOffset() + mappedFile.getReadPosition();
         }
         return 0;
     }
 
+    /**
+     * queue中最大写指针位置
+     * @return
+     */
     public long getMaxWrotePosition() {
         MappedFile mappedFile = getLastMappedFile();
         if (mappedFile != null) {
+            // 最后一个文件的最后一条消息物理偏移量 + 写指针位置
             return mappedFile.getFileFromOffset() + mappedFile.getWrotePosition();
         }
         return 0;
@@ -583,7 +605,7 @@ public class MappedFileQueue {
                         this.mappedFileSize,
                         this.mappedFiles.size());
                 } else {
-                    // 当前offset在哪个文件
+                    // 当前offset在哪个文件 因为MappedFile会被删除，所以这里需要处理一下
                     int index = (int) ((offset / this.mappedFileSize) - (firstMappedFile.getFileFromOffset() / this.mappedFileSize));
                     MappedFile targetFile = null;
                     try {

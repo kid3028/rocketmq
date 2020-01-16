@@ -72,9 +72,9 @@ public class MixAll {
     public static final String DEFAULT_CHARSET = "UTF-8";
     public static final long MASTER_ID = 0L;
     public static final long CURRENT_JVM_PID = getPID();
-
+    // 重试topic前缀
     public static final String RETRY_GROUP_TOPIC_PREFIX = "%RETRY%";
-
+    // 死信队列topic前缀
     public static final String DLQ_GROUP_TOPIC_PREFIX = "%DLQ%";
     public static final String SYSTEM_TOPIC_PREFIX = "rmq_sys_";
     public static final String UNIQUE_MSG_QUERY_FLAG = "_UNIQUE_KEY_QUERY";

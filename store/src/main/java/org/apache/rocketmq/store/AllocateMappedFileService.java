@@ -201,9 +201,7 @@ public class AllocateMappedFileService extends ServiceThread {
                 }
 
                 // pre write mappedFile
-                if (mappedFile.getFileSize() >= this.messageStore.getMessageStoreConfig()
-                    .getMapedFileSizeCommitLog()
-                    &&
+                if (mappedFile.getFileSize() >= this.messageStore.getMessageStoreConfig().getMapedFileSizeCommitLog() &&
                     this.messageStore.getMessageStoreConfig().isWarmMapedFileEnable()) {
                     // 对mappedFile进行预热
                     mappedFile.warmMappedFile(this.messageStore.getMessageStoreConfig().getFlushDiskType(),

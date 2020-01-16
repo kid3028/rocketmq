@@ -362,6 +362,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             // 判断重试消费次数，投入死信队列
             int reconsumeTimes = requestHeader.getReconsumeTimes() == null ? 0 : requestHeader.getReconsumeTimes();
             if (reconsumeTimes >= maxReconsumeTimes) {
+                // %DLQ% + consumerGroup
                 newTopic = MixAll.getDLQTopic(groupName);
                 int queueIdInt = Math.abs(this.random.nextInt() % 99999999) % DLQ_NUMS_PER_GROUP;
                 topicConfig = this.brokerController.getTopicConfigManager().createTopicInSendMessageBackMethod(newTopic,
@@ -419,6 +420,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
 
         response.setCode(-1);
         // 检查topic和queue，如果不存在且broker设置中允许自动创建，则自动创建，如果不支持自动创建，则返回错误
+        // 1、broker没有写权限 2、默认队列不能投递消息  3、是否允许创建topic 4、如果是重试topic，没有时创建重试topic 5、queue不能超过最大读写队列数
         super.msgCheck(ctx, requestHeader, response);
         if (response.getCode() != -1) {
             return response;
@@ -441,16 +443,17 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
 
         /**
          * 对于RETRY消息
-         *   1.判断是否consumer还存在，因为consumer将消息返回给broker之后，会设置一个延时时间，broker有一个定时任务在扫描到重发时间到了以后，
-         *   会调用processor，所以需要check一下调用的时候consumer还在不在
-         *   2.如果超过了最大重发次数，尝试创建DLQ，并将topic设置成DeadQueue，消息将被放入死信队列
+         *   1.检查consumer的订阅信息
+         *   2.如果超过了最大重试次数，尝试创建DLQ，并将topic设置成%DLQ% + consumerGroup，消息将被放入死信队列
          */
         if (!handleRetryAndDLQ(requestHeader, response, request, msgInner, topicConfig)) {
+            // 1、获取订阅信息失败  2、创建死信队列失败
             return response;
         }
 
         msgInner.setBody(body);
         msgInner.setFlag(requestHeader.getFlag());
+        // 将属性信息转换为properties
         MessageAccessor.setProperties(msgInner, MessageDecoder.string2messageProperties(requestHeader.getProperties()));
         msgInner.setPropertiesString(requestHeader.getProperties());
         msgInner.setBornTimestamp(requestHeader.getBornTimestamp());

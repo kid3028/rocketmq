@@ -533,12 +533,13 @@ public class ConsumeQueue {
      * @param offset commitLog offset 8byte
      * @param size 消息体大小 4byte
      * @param tagsCode 消息tags的hashcode
-     * @param cqOffset 写入consumequeue的offset
+     * @param cqOffset 当前consumequeue已经写到的位置，此次消息将从该offset开始写
      * @return
      */
     private boolean putMessagePositionInfo(final long offset, final int size, final long tagsCode,
         final long cqOffset) {
 
+        // 新增消息的offset如果比当前最大offset小，那么说明消息重复或者消息无效，直接返回
         if (offset <= this.maxPhysicOffset) {
             return true;
         }
@@ -546,8 +547,11 @@ public class ConsumeQueue {
         // 一个CQUnit的大小是固定的20字节
         this.byteBufferIndex.flip();
         this.byteBufferIndex.limit(CQ_STORE_UNIT_SIZE);
+        // commitlog offset
         this.byteBufferIndex.putLong(offset);
+        // msgSize
         this.byteBufferIndex.putInt(size);
+        // taghashcode
         this.byteBufferIndex.putLong(tagsCode);
 
         // 计算预计插入ConsumeQueue的consumequeue文件位置
@@ -586,6 +590,7 @@ public class ConsumeQueue {
                     );
                 }
             }
+            // 写入消息后可到达的最大commitlog offset
             this.maxPhysicOffset = offset;
             // CQUnit写入ConsumeQueue文件中，整个过程都是基于MappedFile来操作的
             return mappedFile.appendMessage(this.byteBufferIndex.array());
@@ -593,6 +598,12 @@ public class ConsumeQueue {
         return false;
     }
 
+    /**
+     * consumequeue下的第一个mappedFile文件，初始化CQUnit值为0
+     *
+     * @param mappedFile
+     * @param untilWhere
+     */
     private void fillPreBlank(final MappedFile mappedFile, final long untilWhere) {
         ByteBuffer byteBuffer = ByteBuffer.allocate(CQ_STORE_UNIT_SIZE);
         byteBuffer.putLong(0L);

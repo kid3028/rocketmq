@@ -42,6 +42,7 @@ public class StoreStatsService extends ServiceThread {
 
     private static int printTPSInterval = 60 * 1;
 
+    // 存储消息失败次数
     private final AtomicLong putMessageFailedTimes = new AtomicLong(0);
 
     private final ConcurrentMap<String, AtomicLong> putMessageTopicTimesTotal =
@@ -556,6 +557,11 @@ public class StoreStatsService extends ServiceThread {
         return rs;
     }
 
+    /**
+     * 统计每个topic进来了多少消息
+     * @param topic
+     * @return
+     */
     public AtomicLong getSinglePutMessageTopicTimesTotal(String topic) {
         AtomicLong rs = putMessageTopicTimesTotal.get(topic);
         if (null == rs) {

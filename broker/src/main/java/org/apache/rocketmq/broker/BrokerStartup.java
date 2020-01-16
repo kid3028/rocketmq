@@ -196,7 +196,7 @@ public class BrokerStartup {
                     break;
             }
 
-            // 设置HA监听端口为nettyServer端口+1
+            // 设置HA监听端口为nettyServer端口+1  10912
             messageStoreConfig.setHaListenPort(nettyServerConfig.getListenPort() + 1);
             // 日志相关
             LoggerContext lc = (LoggerContext) LoggerFactory.getILoggerFactory();

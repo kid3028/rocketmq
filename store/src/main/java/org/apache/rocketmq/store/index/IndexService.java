@@ -89,6 +89,7 @@ public class IndexService {
 
     /**
      * 加载Index文件
+     * 如果上次异常退出，而且索引文件上次刷新时间该索引文件最大的消息时间戳，该文件将立即销毁
      * index
      * @param lastExitOK
      * @return
@@ -302,8 +303,8 @@ public class IndexService {
                     return;
             }
 
-            // 单条消息
             if (req.getUniqKey() != null) {
+                // buildKey --> topic#uniqKey
                 indexFile = putKey(indexFile, msg, buildKey(topic, req.getUniqKey()));
                 if (indexFile == null) {
                     log.error("putKey error commitlog {} uniqkey {}", req.getCommitLogOffset(), req.getUniqKey());
@@ -320,6 +321,7 @@ public class IndexService {
                  * 用户在发送消息的时候可以指定多个key，多个key使用空格分隔{@link MessageConst#KEY_SEPARATOR}
                  *
                  * UniqKey:
+                 * // TODO
                  *    消息唯一键，与消息Id不一样，因为消息ID在commitLog文件中并不是唯一的，消息消费重试时，发送的消息的消息id与原先的一样（？？？待确认）
                  *    具体算法：{@link MessageClientIDSetter#createUniqID()}
                  */
@@ -342,12 +344,13 @@ public class IndexService {
 
     /**
      * putKey方法包含了重试逻辑，因为有可能在写index的时候，上一个文件已经写满，需要创建一个新的文件写入
-     * @param indexFile
-     * @param msg
+     * @param indexFile 当前IndexFile文件，如果put失败，会重新获取IndexFile
+     * @param msg dispatchRequest
      * @param idxKey
      * @return
      */
     private IndexFile putKey(IndexFile indexFile, DispatchRequest msg, String idxKey) {
+        // 将消息存入Index中
         for (boolean ok = indexFile.putKey(idxKey, msg.getCommitLogOffset(), msg.getStoreTimestamp()); !ok; ) {
             log.warn("Index file [" + indexFile.getFileName() + "] is full, trying to create another one");
 
@@ -364,6 +367,7 @@ public class IndexService {
 
     /**
      * 如果有可用的返回，没有则新建
+     * Index文件如果创建3次仍没有成功，则返回null
      * Retries to get or create index file.
      *
      * @return {@link IndexFile} or null on failure.
@@ -371,6 +375,7 @@ public class IndexService {
     public IndexFile retryGetAndCreateIndexFile() {
         IndexFile indexFile = null;
 
+        // 最多尝试创建3次
         for (int times = 0; null == indexFile && times < MAX_TRY_IDX_CREATE; times++) {
             // 获取最后一个indexFile，如果indexFile满了，重新创建一个
             indexFile = this.getAndCreateLastIndexFile();
@@ -426,7 +431,7 @@ public class IndexService {
         // 文件满了
         if (indexFile == null) {
             try {
-                // 创建一个新的indexFile
+                // 创建一个新的indexFile(文件名使用创建MappedFile时的时间yyyyMMddHHmmssSSS)
                 String fileName =
                     this.storePath + File.separator
                         + UtilAll.timeMillisToHumanString(System.currentTimeMillis());

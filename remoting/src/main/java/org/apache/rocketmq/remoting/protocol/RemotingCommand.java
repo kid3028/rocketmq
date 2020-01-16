@@ -99,6 +99,8 @@ public class RemotingCommand {
     private int opaque = requestId.getAndIncrement();
     /**
      * request & response 通信层的标识位
+     * 倒数第一位表示请求类型类型 0：请求 1：返回
+     * 倒数第二位 1：表示oneway
      */
     private int flag = 0;
     /**
@@ -112,11 +114,14 @@ public class RemotingCommand {
      * response 应答自定义字段
      */
     private HashMap<String, String> extFields;
+    /**
+     * 每个请求对应的请求头信息
+     */
     private transient CommandCustomHeader customHeader;
 
     private SerializeType serializeTypeCurrentRPC = serializeTypeConfigInThisServer;
 
-    // 不对body进行序列化
+    // 消息体内容 不对body进行序列化
     private transient byte[] body;
 
     protected RemotingCommand() {

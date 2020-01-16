@@ -16,14 +16,15 @@
  */
 package org.apache.rocketmq.common;
 
-import java.net.InetAddress;
-import java.net.UnknownHostException;
 import org.apache.rocketmq.common.annotation.ImportantField;
 import org.apache.rocketmq.common.constant.LoggerName;
 import org.apache.rocketmq.common.constant.PermName;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.remoting.common.RemotingUtil;
+
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 
 public class BrokerConfig {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.COMMON_LOGGER_NAME);
@@ -69,6 +70,9 @@ public class BrokerConfig {
 
     private int flushConsumerOffsetHistoryInterval = 1000 * 60;
 
+    /**
+     * 是否拒绝事务消息
+     */
     @ImportantField
     private boolean rejectTransactionMessage = false;
     @ImportantField
@@ -112,6 +116,7 @@ public class BrokerConfig {
     private long waitTimeMillsInPullQueue = 5 * 1000;
     private long waitTimeMillsInHeartbeatQueue = 31 * 1000;
 
+    // broker在什么时候开始提供服务
     private long startAcceptSendRequestTimeStamp = 0L;
 
     private boolean traceOn = true;

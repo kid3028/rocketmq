@@ -396,6 +396,11 @@ public class MessageDecoder {
         return sb.toString();
     }
 
+    /**
+     * 将字符串配置转化为properties配置
+     * @param properties
+     * @return
+     */
     public static Map<String, String> string2messageProperties(final String properties) {
         Map<String, String> map = new HashMap<String, String>();
         if (properties != null) {
@@ -411,6 +416,11 @@ public class MessageDecoder {
         return map;
     }
 
+    /**
+     * 编码批量消息时候，会将批量中的每一条消息拿到这里编码为一个byte[]
+     * @param message
+     * @return
+     */
     public static byte[] encodeMessage(Message message) {
         //only need flag, body, properties
         byte[] body = message.getBody();

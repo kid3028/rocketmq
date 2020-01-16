@@ -243,7 +243,8 @@ public class TopicConfigManager extends ConfigManager {
     }
 
     /**
-     * 当发送消息时如果broker不存在topic，broker自动创建topic
+     * 当发送重试消息时如果broker不存在重试topic，broker自动创建重试topic
+     * 如果重试次数已达上限，创建私信队列topic
      * @param topic
      * @param clientDefaultTopicQueueNums
      * @param perm
@@ -255,9 +256,9 @@ public class TopicConfigManager extends ConfigManager {
         final int clientDefaultTopicQueueNums,
         final int perm,
         final int topicSysFlag) {
-        // 尝试从本地缓存获取topic
+        // 尝试从本地缓存获取重试topic
         TopicConfig topicConfig = this.topicConfigTable.get(topic);
-        // 已经有topic信息，直接返回
+        // 已经有重试topic信息，直接返回
         if (topicConfig != null)
             return topicConfig;
 
@@ -267,6 +268,7 @@ public class TopicConfigManager extends ConfigManager {
             if (this.lockTopicConfigTable.tryLock(LOCK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
                 try {
                     topicConfig = this.topicConfigTable.get(topic);
+                    // 双重校验
                     if (topicConfig != null)
                         return topicConfig;
 

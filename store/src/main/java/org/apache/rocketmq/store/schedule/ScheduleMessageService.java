@@ -215,7 +215,7 @@ public class ScheduleMessageService extends ConfigManager {
         // org.apache.rocketmq.store.config.MessageStoreConfig.messageDelayLevel = "1s 5s 10s 30s 1m 2m 3m 4m 5m 6m 7m 8m 9m 10m 20m 30m 1h 2h"
         String levelString = this.defaultMessageStore.getMessageStoreConfig().getMessageDelayLevel();
         try {
-            // 根据空格将配置分隔出每个等级
+            // 根据空格将配置分隔出每个等级 length = 18
             String[] levelArray = levelString.split(" ");
             for (int i = 0; i < levelArray.length; i++) {
                 String value = levelArray[i];

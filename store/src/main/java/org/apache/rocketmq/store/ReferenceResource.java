@@ -41,11 +41,14 @@ public abstract class ReferenceResource {
     }
 
     /**
-     * 关闭
+     * 关闭MappedFile
      * @param intervalForcibly
      */
     public void shutdown(final long intervalForcibly) {
         /**
+         * 初次调用时this.available为true，设置available为false，并设置初次关闭的时间戳(firstShutdownTimestamp)为当前时间戳，然后调用release()方法尝试释放资源，
+         * release()只有在引用计数为1的情况下会释放资源，如果引用计数大于0，对比当前时间与firstShutdownTimestamp，如果已经超过了其最大拒绝存活期，每执行一次，
+         * 将引用计数较少1000，直到引用计数小于0时通过release()方法释放
          * 如果available为true，表示第一次执行shutdown方法，首先设置available为false，并记录
          * firstShutdownTimestamp时间戳，释放资源
          * 如果当前文件被其他线程引用，则本次不强制删除，如果没有被其他线程使用，释放相关资源，
@@ -96,6 +99,8 @@ public abstract class ReferenceResource {
      * @return
      */
     public boolean isCleanupOver() {
+        // 引用次数小于等于0并且cleanupOver为true
+        // cleanupOver在release()成功将MappedByteBuffer资源释放时赋值
         return this.refCount.get() <= 0 && this.cleanupOver;
     }
 }

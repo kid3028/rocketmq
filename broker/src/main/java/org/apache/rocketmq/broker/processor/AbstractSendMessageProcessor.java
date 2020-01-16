@@ -54,7 +54,7 @@ import java.util.Random;
 
 public abstract class AbstractSendMessageProcessor implements NettyRequestProcessor {
     protected static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
-
+    // 死信队列 queue数量
     protected final static int DLQ_NUMS_PER_GROUP = 1;
     protected final BrokerController brokerController;
     protected final Random random = new Random(System.currentTimeMillis());
@@ -160,7 +160,9 @@ public abstract class AbstractSendMessageProcessor implements NettyRequestProces
     }
 
     /**
-     * broker在接收到consumer发送回来的重试的时候，如果还没有创建retryTopic的topicConfig配置，会进行新建
+     * topic检查
+     * 1、broker不可写（没有写权限） --> {@link ResponseCode#NO_PERMISSION}
+     * 2、默认topic，只用作topic创建，不接受消息 --> {@link MixAll#AUTO_CREATE_TOPIC_KEY_TOPIC}
      * @param ctx
      * @param requestHeader
      * @param response
@@ -168,7 +170,7 @@ public abstract class AbstractSendMessageProcessor implements NettyRequestProces
      */
     protected RemotingCommand msgCheck(final ChannelHandlerContext ctx,
         final SendMessageRequestHeader requestHeader, final RemotingCommand response) {
-        // broker不可写
+        // broker不可写（没有写权限）
         if (!PermName.isWriteable(this.brokerController.getBrokerConfig().getBrokerPermission())
             && this.brokerController.getTopicConfigManager().isOrderTopic(requestHeader.getTopic())) {
             response.setCode(ResponseCode.NO_PERMISSION);
@@ -176,7 +178,7 @@ public abstract class AbstractSendMessageProcessor implements NettyRequestProces
                 + "] sending message is forbidden");
             return response;
         }
-        // topic不能是系统内存的  AUTO_CREATE_TOPIC_KEY
+        // topic不能是系统内建的 AUTO_CREATE_TOPIC_KEY，该topic只用于
         if (!this.brokerController.getTopicConfigManager().isTopicCanSendMessage(requestHeader.getTopic())) {
             String errorMsg = "the topic[" + requestHeader.getTopic() + "] is conflict with system reserved words.";
             log.warn(errorMsg);
@@ -185,9 +187,10 @@ public abstract class AbstractSendMessageProcessor implements NettyRequestProces
             return response;
         }
 
-        // 获取topic配置信息
+        // 尝试获取topic配置信息
         TopicConfig topicConfig =
             this.brokerController.getTopicConfigManager().selectTopicConfig(requestHeader.getTopic());
+        // 不存在topic
         if (null == topicConfig) {
             int topicSysFlag = 0;
             if (requestHeader.isUnitMode()) {
@@ -200,7 +203,7 @@ public abstract class AbstractSendMessageProcessor implements NettyRequestProces
             }
 
             log.warn("the topic {} not exist, producer: {}", requestHeader.getTopic(), ctx.channel().remoteAddress());
-            // 创建topic
+            // 不存在topic，则创建topic
             topicConfig = this.brokerController.getTopicConfigManager().createTopicInSendMessageMethod(
                 requestHeader.getTopic(),
                 requestHeader.getDefaultTopic(),
@@ -210,6 +213,7 @@ public abstract class AbstractSendMessageProcessor implements NettyRequestProces
             // topic是重试topic，则创建重试topic
             if (null == topicConfig) {
                 if (requestHeader.getTopic().startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
+                    // 重试topic、如果不存在，那么创建一个
                     topicConfig =
                         this.brokerController.getTopicConfigManager().createTopicInSendMessageBackMethod(
                             requestHeader.getTopic(), 1, PermName.PERM_WRITE | PermName.PERM_READ,
@@ -217,6 +221,7 @@ public abstract class AbstractSendMessageProcessor implements NettyRequestProces
                 }
             }
 
+            // topic仍没有，消息存储响应失败
             if (null == topicConfig) {
                 response.setCode(ResponseCode.TOPIC_NOT_EXIST);
                 response.setRemark("topic[" + requestHeader.getTopic() + "] not exist, apply first please!"
@@ -225,6 +230,7 @@ public abstract class AbstractSendMessageProcessor implements NettyRequestProces
             }
         }
 
+        // 校验queueId是否超越最大读写队列数量
         int queueIdInt = requestHeader.getQueueId();
         int idValid = Math.max(topicConfig.getWriteQueueNums(), topicConfig.getReadQueueNums());
         if (queueIdInt >= idValid) {
