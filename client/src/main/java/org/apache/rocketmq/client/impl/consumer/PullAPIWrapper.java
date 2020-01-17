@@ -164,17 +164,17 @@ public class PullAPIWrapper {
      * broker实现冗余之后，就有多个消息副本了，那么consumer怎么知道究竟是从master读取消息还是从slave读取消息？？？
      * consumer通过负载均衡算法计算出本次消息从哪一个MessageQueue消息，但是MessageQueue只是决定了从哪一个broker set下
      * 的哪一个queue消费消息，并不能确定具体的broker，但是在发送pull请求的时候会确定具体的broker
-     * @param mq 消息消费队列
-     * @param subExpression  消息订阅子模式
-     * @param expressionType
+     * @param mq 从哪个消息消费队列拉取消息
+     * @param subExpression  消息过滤表达式
+     * @param expressionType 消息表达式类型，tag、sql92
      * @param subVersion  版本
-     * @param offset // pullRequest.getNextOffset
-     * @param maxNums
+     * @param offset // pullRequest.getNextOffset  消息拉取偏移量
+     * @param maxNums 本次拉取最大消息条数
      * @param sysFlag 系统标识
-     * @param commitOffset 当前消息队列commitLog日志中当前的最新偏移量
-     * @param brokerSuspendMaxTimeMillis 允许broker暂停的时间，毫秒为单位，默认12是、
+     * @param commitOffset 当前MessageQueue的消费进度(内存中)
+     * @param brokerSuspendMaxTimeMillis 允许broker暂停的时间，毫秒为单位，默认15
      * @param timeoutMillis 超时时间，默认时30s
-     * @param communicationMode SYNC ASYNC ONEWAY
+     * @param communicationMode SYNC ASYNC ONEWAY 默认ASYNC
      * @param pullCallback pull回调
      * @return
      * @throws MQClientException
@@ -240,6 +240,7 @@ public class PullAPIWrapper {
             requestHeader.setExpressionType(expressionType);
 
             String brokerAddr = findBrokerResult.getBrokerAddr();
+            // 如果消息过滤模式为类过滤，则需要根据主题名称、broker地址找到注册在broker上的FilterServer地址，从FilterServer上拉取消息，否则从broker上拉取消息
             // 如果使用了类过滤消息模式，将会改变拉取地址为FilterServer地址
             if (PullSysFlag.hasClassFilterFlag(sysFlagInner)) {
                 // 根据brokerAddress和topic确定消息过滤服务器，此处已经将broker地址替换为filterServer地址
@@ -310,6 +311,7 @@ public class PullAPIWrapper {
 
     /**
      * 计算从哪一个broker来消费消息
+     * 每次从broker拉取消息之后，会给出一个建议，下次拉取从主节点还是从节点拉取
      * @param mq
      * @return
      */
@@ -319,7 +321,7 @@ public class PullAPIWrapper {
             return this.defaultBrokerId;
         }
         // pullFromWhichNodeTable这个数据结构保存的是broker返回的建议从哪一个broker读取新消息的信息
-        // broker处理producer发送来的消息的时候，会有建议broker  org.apache.rocketmq.broker.processor.PullMessageProcessor.processRequest(io.netty.channel.Channel, org.apache.rocketmq.remoting.protocol.RemotingCommand, boolean)
+        // broker处理consumer发送来的消息的时候，会有建议broker  org.apache.rocketmq.broker.processor.PullMessageProcessor.processRequest(io.netty.channel.Channel, org.apache.rocketmq.remoting.protocol.RemotingCommand, boolean)
         AtomicLong suggest = this.pullFromWhichNodeTable.get(mq);
         if (suggest != null) {
             return suggest.get();

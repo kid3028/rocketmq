@@ -46,6 +46,11 @@ public class PullMessageService extends ServiceThread {
         this.mQClientFactory = mQClientFactory;
     }
 
+    /**
+     * 延迟添加PullRequest
+     * @param pullRequest
+     * @param timeDelay
+     */
     public void executePullRequestLater(final PullRequest pullRequest, final long timeDelay) {
         if (!isStopped()) {
             this.scheduledExecutorService.schedule(new Runnable() {
@@ -59,6 +64,10 @@ public class PullMessageService extends ServiceThread {
         }
     }
 
+    /**
+     * 立即添加PullRequest
+     * @param pullRequest
+     */
     public void executePullRequestImmediately(final PullRequest pullRequest) {
         try {
             this.pullRequestQueue.put(pullRequest);
@@ -85,6 +94,7 @@ public class PullMessageService extends ServiceThread {
      * @param pullRequest
      */
     private void pullMessage(final PullRequest pullRequest) {
+        // 根据消费者组名从MQXClientInstance中获取消费者内部实现类MQConsumerInner
         final MQConsumerInner consumer = this.mQClientFactory.selectConsumer(pullRequest.getConsumerGroup());
         if (consumer != null) {
             DefaultMQPushConsumerImpl impl = (DefaultMQPushConsumerImpl) consumer;
@@ -116,7 +126,9 @@ public class PullMessageService extends ServiceThread {
                  * {@link LinkedBlockingQueue#poll()} 如果队列为空，返回null
                  * {@link LinkedBlockingQueue#remove()} 如果队列为空，抛出NoSuchElementException
                  */
+                // 从pullRequestQueue中获取一个PullRequest消息拉取任务，如果pullRequestQueue为空，则线程将阻塞，直到有拉取任务放入
                 PullRequest pullRequest = this.pullRequestQueue.take();
+                // 拉取消息
                 this.pullMessage(pullRequest);
             } catch (InterruptedException ignored) {
             } catch (Exception e) {

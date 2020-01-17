@@ -91,6 +91,10 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
 
     /**
      * 当consumer启动时从哪里开始消费
+     *
+     * NOTE：如果从消费进度服务{@link OffsetStore}中读取到{@link MessageQueue}中的偏移量不小于0，则使用读取到的偏移量，
+     * 只有读取到的偏移量小于0，策略才会生效
+     *
      * CONSUME_FROM_LAST_OFFSET：从上一次消费到的位置继续消费。当一个consumer启动时，需要根据消费组的年龄来判断，主要有两种情况：
      *    1、如果消费组是刚创建的，最早的能被订阅的消息还没有过期，那么意味着消费者确实是刚创建，需要从头开始消费
      *    2.如果最早的能被订阅的消息已经过期，那么从最近的消息开始消费，也就意味着在启动之前的消息将会被忽略
@@ -141,14 +145,14 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     private String consumeTimestamp = UtilAll.timeMillisToHumanString3(System.currentTimeMillis() - (1000 * 60 * 30));
 
     /**
-     * 消费队列分配策略
+     * 集群模式下消息队列负载均衡策略
      * Queue allocation algorithm specifying how message queues are allocated to each consumer clients.
      */
     private AllocateMessageQueueStrategy allocateMessageQueueStrategy;
 
     /**
-     * Subscription relationship
      * topic订阅信息
+     * Subscription relationship
      */
     private Map<String /* topic */, String /* sub expression */> subscription = new HashMap<String, String>();
 
@@ -170,7 +174,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     private int consumeThreadMin = 20;
 
     /**
-     * 并行消费最大线程数64
+     * 并行消费最大线程数64，由于消费者线程池使用的是无界队列，故消费者线程个数其实最多只有consumeThreadMin个
      * Max consumer thread number
      */
     private int consumeThreadMax = 64;
@@ -181,6 +185,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     private long adjustThreadPoolNumsThreshold = 100000;
 
     /**
+     * 并发消息消费是处理队列最大跨度，默认2000，表示如果消息队列中偏移量最大的消息和偏移量最小的消息跨度超过了2000则延迟50ms后再拉取消息
      * Concurrently max span offset.it has no effect on sequential consumption
      */
     private int consumeConcurrentlyMaxSpan = 2000;
@@ -226,16 +231,19 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     private int pullThresholdSizeForTopic = -1;
 
     /**
+     * 推模式下拉取任务间隔，默认一次拉取任务完成继续拉取
      * Message pull Interval
      */
     private long pullInterval = 0;
 
     /**
+     * 消息并发消费是一次消费消息条数，即每次传入consumeMessage中的消息条数
      * Batch consumption size
      */
     private int consumeMessageBatchMaxSize = 1;
 
     /**
+     * 每次拉取消息所拉取的消息条数
      * Batch pull size
      */
     private int pullBatchSize = 32;
@@ -263,11 +271,13 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     private int maxReconsumeTimes = -1;
 
     /**
+     * 延迟将该队列的消息提交到消费者线程的等待时间
      * Suspending pulling time for cases requiring slow pulling like flow-control scenario.
      */
     private long suspendCurrentQueueTimeMillis = 1000;
 
     /**
+     * 消息消费超时时间
      * Maximum amount of time in minutes a message may block the consuming thread.
      */
     private long consumeTimeout = 15;

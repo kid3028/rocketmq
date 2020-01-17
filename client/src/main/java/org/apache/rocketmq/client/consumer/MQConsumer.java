@@ -16,13 +16,14 @@
  */
 package org.apache.rocketmq.client.consumer;
 
-import java.util.Set;
 import org.apache.rocketmq.client.MQAdmin;
 import org.apache.rocketmq.client.exception.MQBrokerException;
 import org.apache.rocketmq.client.exception.MQClientException;
 import org.apache.rocketmq.common.message.MessageExt;
 import org.apache.rocketmq.common.message.MessageQueue;
 import org.apache.rocketmq.remoting.exception.RemotingException;
+
+import java.util.Set;
 
 /**
  * Message queue consumer interface
@@ -42,6 +43,7 @@ public interface MQConsumer extends MQAdmin {
         throws RemotingException, MQBrokerException, InterruptedException, MQClientException;
 
     /**
+     * 获取消费者对主题topic分配了哪些消息队列
      * Fetch message queues from consumer cache according to the topic
      *
      * @param topic message topic

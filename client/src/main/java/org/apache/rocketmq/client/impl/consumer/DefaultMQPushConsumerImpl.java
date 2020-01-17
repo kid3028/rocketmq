@@ -197,15 +197,21 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
 
     /**
      * 真正执行消息拉取服务
+     * 1、消息拉取客户端消息拉取请求封装
+     * 2、消息服务器查找并返回消息
+     * 3、消息拉取客户端处理返回的消息
      * @param pullRequest
      */
     public void pullMessage(final PullRequest pullRequest) {
+        // 从pullRequest中获取ProcessQueue
         final ProcessQueue processQueue = pullRequest.getProcessQueue();
+        // 当前ProcessQueue队列被丢弃
         if (processQueue.isDropped()) {
             log.info("the pull request[{}] is dropped.", pullRequest.toString());
             return;
         }
 
+        // 如果处理队列当前状态未被丢弃，则更新ProcessQueue的lastPullTimestamp为当前时间戳，
         pullRequest.getProcessQueue().setLastPullTimestamp(System.currentTimeMillis());
 
         try {
@@ -218,7 +224,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
             return;
         }
 
-        // 消费者服务状态处于暂停，也延迟3s再执行
+        // 当前消费者被挂起，则将拉取任务延迟1s再次放入到PullRequestService的拉取任务队列中，结束本次消息拉取
         if (this.isPause()) {
             log.warn("consumer was paused, execute pull request later. instanceName={}, group={}", this.defaultMQPushConsumer.getInstanceName(), this.defaultMQPushConsumer.getConsumerGroup());
             this.executePullRequestLater(pullRequest, PULL_TIME_DELAY_MILLS_WHEN_SUSPEND);
@@ -232,6 +238,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
         // 如果消息堆积过多，则扔回PullMessageService，延时执行默认是50ms
         if (cachedMessageCount > this.defaultMQPushConsumer.getPullThresholdForQueue()) {
             this.executePullRequestLater(pullRequest, PULL_TIME_DELAY_MILLS_WHEN_FLOW_CONTROL);
+            // 每触发1000次流控后输出提示日志
             if ((queueFlowControlTimes++ % 1000) == 0) {
                 log.warn(
                     "the cached message count exceeds the threshold {}, so do flow control, minOffset={}, maxOffset={}, count={}, size={} MiB, pullRequest={}, flowControlTimes={}",
@@ -433,6 +440,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
 
         String subExpression = null;
         boolean classFilter = false;
+        // 拉取该主题订阅消息
         SubscriptionData sd = this.rebalanceImpl.getSubscriptionInner().get(pullRequest.getMessageQueue().getTopic());
         if (sd != null) {
             if (this.defaultMQPushConsumer.isPostSubscriptionWhenPull() && !sd.isClassFilterMode()) {
@@ -698,7 +706,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                         new ConsumeMessageConcurrentlyService(this, (MessageListenerConcurrently) this.getMessageListenerInner());
                 }
 
-                // 只是启动了清理等待处理消息服务
+                // 负责消息消费，内部维护了一个线程池
                 this.consumeMessageService.start();
 
                 // 注册(缓存)consumer，保证CID单例
