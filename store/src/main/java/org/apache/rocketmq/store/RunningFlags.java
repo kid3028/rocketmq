@@ -118,6 +118,10 @@ public class RunningFlags {
         return false;
     }
 
+    /**
+     * 标记磁盘已满，之后将会拒绝消息写入
+     * @return
+     */
     public boolean getAndMakeDiskFull() {
         boolean result = !((this.flagBits & DISK_FULL_BIT) == DISK_FULL_BIT);
         this.flagBits |= DISK_FULL_BIT;

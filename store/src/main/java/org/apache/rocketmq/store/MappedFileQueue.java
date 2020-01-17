@@ -435,9 +435,9 @@ public class MappedFileQueue {
 
     /**
      * 到点后删除过期文件
-     * @param expiredTime
-     * @param deleteFilesInterval
-     * @param intervalForcibly
+     * @param expiredTime 默认72小时
+     * @param deleteFilesInterval 两次删除间隔时间
+     * @param intervalForcibly 删除允许超时
      * @param cleanImmediately
      * @return
      */
@@ -445,25 +445,32 @@ public class MappedFileQueue {
         final int deleteFilesInterval,
         final long intervalForcibly,
         final boolean cleanImmediately) {
+        // 将mappedFile从列表转化为数组
         Object[] mfs = this.copyMappedFiles(0);
 
         if (null == mfs)
             return 0;
 
+        // 1.
         int mfsLength = mfs.length - 1;
         int deleteCount = 0;
         List<MappedFile> files = new ArrayList<MappedFile>();
         if (null != mfs) {
+            // 2.在1的位置已经-1了，所以最新的那一个MappedFile不会被删除掉
             for (int i = 0; i < mfsLength; i++) {
                 MappedFile mappedFile = (MappedFile) mfs[i];
+                // 文件的最大存活时间 = 最后修改时间 + 过期时间(默认72小时)
                 long liveMaxTimestamp = mappedFile.getLastModifiedTimestamp() + expiredTime;
                 // 文件最后一次更新时间+文件保留时间 < 当前时间，过期，调用MappedFile#destroy删除文件
+                // 即使时间未达到，但是cleanImmediately=true,那么也要进行文件删除
                 if (System.currentTimeMillis() >= liveMaxTimestamp || cleanImmediately) {
+                    // 清除MappedFile占用的相关资源，如果执行成功，将该文件加入待删除文件列表，然后统一执行File#delete方法将文件从物理磁盘删除
                     if (mappedFile.destroy(intervalForcibly)) {
                         // 加入移除list
                         files.add(mappedFile);
                         deleteCount++;
 
+                        // 已经达到了本批次删除的数量，则停止遍历，先对本批次数据进行删除
                         if (files.size() >= DELETE_FILES_BATCH_MAX) {
                             break;
                         }

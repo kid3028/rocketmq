@@ -174,9 +174,9 @@ public class CommitLog {
 
     /**
      * 删除过期文件
-     * @param expiredTime
-     * @param deleteFilesInterval
-     * @param intervalForcibly
+     * @param expiredTime 默认72小时
+     * @param deleteFilesInterval 两次删除文件的间隔
+     * @param intervalForcibly 删除时允许的超时时间
      * @param cleanImmediately
      * @return
      */
