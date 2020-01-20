@@ -102,10 +102,9 @@ public class HAService {
     }
 
     /**
-     * 该方法是在master收到从服务器的拉取请求(slave下一次待拉取的消息偏移量，或者说是slave的拉取偏移量确认信息)
-     * 先获取当前master的最大偏移量，再跟传入的slave的maxOffset比较，如果大于则忽略，如果当前master的最大偏移量
-     * 小于传入的slave的maxOffset，那么通过CAS将push2SlaveMaxOffset改为slave的maxOffset，
-     * 并且调用groupTransferService的notifyTransferSome()方法唤起前端线程
+     * 该方法是在master收到从服务器的拉取请求后被调用，表示从服务器当前已同步的偏移量，既然收到从服务器到的反馈信息，需要唤醒某些消息发送者线程。
+     * 如果从服务器收到的确认偏移量大于push2SlaveMaxOffset,则更新push2SlaveMaxOffset，然后唤醒GroupTransferService线程，
+     * 各个消息发送者线程再次判断自己本次发送的消息是否已经成功复制到从服务器
      * @param offset
      */
     public void notifyTransferSome(final long offset) {
@@ -208,6 +207,7 @@ public class HAService {
         }
 
         /**
+         * 创建ServerSocketChannel、创建Selector，设置TCP reuseAddress、绑定监听端口，设置为非阻塞模式，并注册OP_ACCEPT连接事件
          * Starts listening to slave connections.
          *
          * @throws Exception If fails.
@@ -315,6 +315,9 @@ public class HAService {
      * 唤醒的同时设置slave是否flush成功。
      * 唤醒成功之后，commitLog就能继续消息的处理流程，将Slave的flush结果返回给消费者
      * GroupTransferService Service
+     *
+     * GroupTransferService主从同步阻塞实现，如果是同步主从模式，消息发送者将消息刷写到磁盘之后，需要等待新数据被传输到从服务器，从服务器数据的赋值在另外一个线程HAConnection中去拉取的，
+     * 所以消息发送者在这里需要等待数据传输的结果，GroupTransferService就是实现类似的功能，该类的整体结构与同步刷盘实现类{@link org.apache.rocketmq.store.CommitLog.GroupCommitService}类似
      */
     class GroupTransferService extends ServiceThread {
 
@@ -342,6 +345,7 @@ public class HAService {
         }
 
         /**
+         * GroupTransferService的职责是负责当主从同步复制结束之后通知由于等待HA同步结果而阻塞的消息发送者线程，
          * 判断slave中已成功复制的最大偏移量是否大于等于消息生产者发送消息后消息服务端返回吓一跳消息的起始偏移量
          * 如果大于等于那么说明主从同步复制已经完成，唤醒消息发送线程，否则等待1s，再次判断，每个任务在一批任务中循环判断5次。
          */
@@ -408,11 +412,11 @@ public class HAService {
         private static final int READ_MAX_BUFFER_SIZE = 1024 * 1024 * 4;
         // master ip:port 保存master的信息，master也会初始化HAClient，但是masterAddress是空的
         private final AtomicReference<String> masterAddress = new AtomicReference<>();
-        // 向master汇报slave的最大offset
+        // slave向master发起主从同步的拉取偏移量
         private final ByteBuffer reportOffset = ByteBuffer.allocate(8);
-        // slave向master汇报
+        // 反馈slave当前的复制进度，commitlog文件最大偏移量
         private long currentReportedOffset = 0;
-        // 拆包粘包使用
+        // 拆包粘包使用，本次已处理读缓冲区的指针
         private int dispatchPostion = 0;
         // 读缓冲区，从master接收数据buffer 4M
         private ByteBuffer byteBufferRead = ByteBuffer.allocate(READ_MAX_BUFFER_SIZE);
@@ -460,6 +464,9 @@ public class HAService {
 
         /**
          * 向master上报当前最大offset并作为心跳数据
+         * 向Master服务器反馈拉取偏移量，这里有两重意思：
+         * 对于Slave端来说，是发送下次待拉取消息偏移量，
+         * 而对于Master服务端来说，既可以认为是Slave本次请求拉取的消息偏移量，也可以理解为slave额消息同步ACK确认消息
          * @param maxOffset
          * @return
          */
@@ -474,6 +481,7 @@ public class HAService {
             // 循环写，将reportOffset数据写入channel，hasRemaining返回false，说明已经全部写完
             for (int i = 0; i < 3 && this.reportOffset.hasRemaining(); i++) {
                 try {
+                    // 调用网络通道额write方法是在一个while循环中反复判断byteBuffer是否全部写入到通道中，这是由于NIO是一个非阻塞IO，调用一次write方法不一定会将ByteBuffer可读字节全部写入
                     this.socketChannel.write(this.reportOffset);
                 } catch (IOException e) {
                     log.error(this.getServiceName()
@@ -534,10 +542,12 @@ public class HAService {
          */
         private boolean processReadEvent() {
             int readSizeZeroTimes = 0;
-            // hasRemaining返回true，输入buffer中还有数据
+            // 循环判断readByteBuffer是否还有剩余空间，如果存在剩余空间，在调用SocketChannel#read 将通道中的数据读入到读缓冲区
             while (this.byteBufferRead.hasRemaining()) {
                 try {
                     int readSize = this.socketChannel.read(this.byteBufferRead);
+                    // 1.如果读取到字节数大于0，重置读取到0字节的次数(readSizeZeroTimes)，并更新最后一次写入时间戳(lastWriteTimestamp)，
+                    //   然后调用dispatchReadRequest方法将读取到的所有消息全部追加到内存映射文件中，然后再次反馈拉取进度给服务器
                     if (readSize > 0) {
                         // 更新最后一次写入时间戳
                         lastWriteTimestamp = HAService.this.defaultMessageStore.getSystemClock().now();
@@ -549,12 +559,16 @@ public class HAService {
                             log.error("HAClient, dispatchReadRequest error");
                             return false;
                         }
-                    } else if (readSize == 0) {
+                    }
+                    // 2.如果连续3次从网络中读取到0字节，则结束本次读，返回true
+                    else if (readSize == 0) {
                         // 如果连续三次读到0字节，返回false
                         if (++readSizeZeroTimes >= 3) {
                             break;
                         }
-                    } else {
+                    }
+                    // 3.如果读取到的字节数小于0或者发生IO异常，返回false
+                    else {
                         log.info("HAClient, processReadEvent read socket < 0");
                         return false;
                     }

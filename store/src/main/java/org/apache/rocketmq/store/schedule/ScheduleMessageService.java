@@ -38,26 +38,68 @@ import java.util.concurrent.ConcurrentMap;
 /**
  * 处理延时消息队列中的消息
  * broker启动的时候DefaultMessageStore会调用start方法来启动处理延时消息队列的服务
+ *
+ * 构造方法 --> load()  -->  start()
+ *
+ * 定时消息的第一个设计关键点：定时消息单独一个主题:SCHEDULE_TOPIC_XXXX，该主题下队列数量等于{@link org.apache.rocketmq.store.config.MessageStoreConfig#messageDelayLevel}
+ * 配置的延迟级别数量，其对应关系为queueId等于延迟级别-1.ScheduleMessageService为每一个延迟级别创建一个定时Timer，根据延迟级别对应的延迟时间进行延迟调度。在消息发送时，如果消息的
+ * 延迟级别delayLevel大于0，将消息的原主题名称、队列id存入消息属性中，然后改变消息的主题，队列与延迟主题与延迟主题所属队列，消息最终转发到延迟消息的消费队列
+ *
+ * 定时消息的第二个设计关键点：消息存储是如果消息的延迟级别属性delayLevel大于0，则会备份圆柱体、原队列到消息属性中，其键分别为PROPERTY_REAL_TOPIC/PROPERTY_REAL_QUEUE_ID，通过为
+ * 不同的延迟级别创建不同的调度任务，当时间到达后执行调度任务，调度任务主要就是根据延迟拉取消息消费进度从延迟队列中拉取消息，然后从commitlog中加载完整消息，清除延迟级别属性并恢复原先的主题，队列，
+ * 再次创建一条新的消息存入到commitlog中并转发到消息消费队列供消息消费者消费
+ *
+ *
+ * 定时消息实现的原理：
+ *  1.消息生产者发送消息，如果发送消息的delayLevel大于0，则改变消息主题为SCHEDULE_TOPIC_XXXX，消息队列为delayLevel-1
+ *  2.消息经由commitlog转发到消息消费队列SCHEDULE_TOPIC_XXXX的消息消费队里
+ *  3.定时任务Timer每隔1s根据上次拉取偏移量从消费队列中取出所有消息
+ *  4.根据消息的物理偏移量与消息大小从commitlog中拉取消息
+ *  5.根据消息属性重新创建消息，并恢复原主题、原队列，清除delayLevel属性，存入commitlog
+ *  6.转发到原主题的消息消费队列，供消费者消费
  */
 public class ScheduleMessageService extends ConfigManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
+    /**
+     * 定时消息统一主题
+     */
     public static final String SCHEDULE_TOPIC = "SCHEDULE_TOPIC_XXXX";
+    /**
+     * 第一次调度时的延迟时间，默认1s
+     */
     private static final long FIRST_DELAY_TIME = 1000L;
+    /**
+     * 每一延时级别调度一次后延迟该时间间隔后再放入调度池
+     */
     private static final long DELAY_FOR_A_WHILE = 100L;
+    /**
+     * 发送异常后延迟该时间后再继续参与调度
+     */
     private static final long DELAY_FOR_A_PERIOD = 10000L;
 
-    // 保存了具体的延时等级
+    /**
+     * 保存了具体的延时等级  ---  延迟时间
+     */
     private final ConcurrentMap<Integer /* level */, Long/* delay timeMillis */> delayLevelTable =
             new ConcurrentHashMap<Integer, Long>(32);
 
+    /**
+     * 延迟等级  --- 消费进度
+     */
     private final ConcurrentMap<Integer /* level */, Long/* offset */> offsetTable =
             new ConcurrentHashMap<Integer, Long>(32);
 
     private final Timer timer = new Timer("ScheduleMessageTimerThread", true);
 
+    /**
+     * 默认消息存储器
+     */
     private final DefaultMessageStore defaultMessageStore;
 
+    /**
+     * {@link org.apache.rocketmq.store.config.MessageStoreConfig#messageDelayLevel} 中最大的消息延迟等级
+     */
     private int maxDelayLevel;
 
     public ScheduleMessageService(final DefaultMessageStore defaultMessageStore) {
@@ -127,7 +169,7 @@ public class ScheduleMessageService extends ConfigManager {
             }
 
             if (timeDelay != null) {
-                // 每个延时队列启动一个定时任务来处理该队列的延时消息  1000ms执行一次
+                // 每一个延迟级别对应一个延迟队列，每个延时队列启动一个定时任务来处理该队列的延时消息  1000ms执行一次
                 this.timer.schedule(new DeliverDelayedMessageTimerTask(level, offset), FIRST_DELAY_TIME);
             }
         }
@@ -164,6 +206,8 @@ public class ScheduleMessageService extends ConfigManager {
      * @return
      */
     public boolean load() {
+        // 主要完成延迟消息消费队列消息进度的加载与delayLevel数据的构造，延迟消息队列消息消费进度默认存储路径为${ROCKETMQ_HOME}/store/config/delayOffset.json
+        // {"offsetTable":{12:0, 6:0, 13:0, 5:1....}}
         boolean result = super.load();
         // 将配置的延时时间转化为对应的毫秒值
         result = result && this.parseDelayLevel();
@@ -296,7 +340,7 @@ public class ScheduleMessageService extends ConfigManager {
             long failScheduleOffset = offset;
 
             if (cq != null) {
-                // 找到offset所处的MappedFile中的offset后面的buffer
+                // 根据offset从消息消费队列中获取当前队列中所有有效的信息。如果没有找到，则更新一下延迟队列定时拉取进度并创建定时任务待下一次尝试
                 SelectMappedBufferResult bufferCQ = cq.getIndexBuffer(this.offset);
                 if (bufferCQ != null) {
                     try {
@@ -309,7 +353,7 @@ public class ScheduleMessageService extends ConfigManager {
                             int sizePy = bufferCQ.getByteBuffer().getInt();
                             /**
                             *  延时消息的tagCode和普通消息不一样
-                             *  延时消息的tagCode：存储的是消息到期的事件
+                             *  延时消息的tagCode：存储的是消息到期的时间
                              *  非延时消息的tagCode：tags字符串的hashCode
                              *  对于延时消息到的tagCode的特别处理是在{@link CommitLog#checkMessageAndReturnSize(ByteBuffer, boolean, boolean)}
                              *  方法中完成到的，也就是在build ConsumeQueue信息的时候
@@ -340,7 +384,7 @@ public class ScheduleMessageService extends ConfigManager {
 
                             // countdown小于0，说明消息已经到期或者过期，立即执行投递
                             if (countdown <= 0) {
-                                // 从指定位置offsetPy开始，获取sizePy大小的数据
+                                // 从commitlog中加载具体的消息，从指定位置offsetPy开始，获取sizePy大小的数据
                                 MessageExt msgExt =
                                         ScheduleMessageService.this.defaultMessageStore.lookMessageByOffset(
                                                 offsetPy, sizePy);
@@ -411,7 +455,7 @@ public class ScheduleMessageService extends ConfigManager {
                         bufferCQ.release();
                     }
                 } // end of if (bufferCQ != null)
-                // 没有获取到数据
+                // 如果没有找到，则更新一下延迟队列定时拉取进度并创建定时任务待下一次尝试
                 else {
                     // 如果根据offsetTable中的offset没有找到对应的消息(可能被删除了)，则按照当前ConsumeQueue的最小offset开始处理
                     long cqMinOffset = cq.getMinOffsetInQueue();
@@ -422,6 +466,8 @@ public class ScheduleMessageService extends ConfigManager {
                     }
                 }
             } // end of if (cq != null)
+
+            // cq == null 说明目前不存在该延迟级别的消息，忽略本次任务，
 
             // 休息100ms后再执行
             ScheduleMessageService.this.timer.schedule(new DeliverDelayedMessageTimerTask(this.delayLevel,

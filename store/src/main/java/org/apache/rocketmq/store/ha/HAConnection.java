@@ -100,8 +100,9 @@ public class HAConnection {
         private static final int READ_MAX_BUFFER_SIZE = 1024 * 1024;
         // 事件选择器
         private final Selector selector;
-        // 网络通道
+        // 网络通道，用于读写的socket通道
         private final SocketChannel socketChannel;
+        // 网络读写缓冲区
         private final ByteBuffer byteBufferRead = ByteBuffer.allocate(READ_MAX_BUFFER_SIZE);
         // 当前已处理数据的指针
         private int processPostion = 0;
@@ -188,13 +189,17 @@ public class HAConnection {
             int readSizeZeroTimes = 0;
 
             if (!this.byteBufferRead.hasRemaining()) {
+                // position == limit == capacity
                 this.byteBufferRead.flip();
                 this.processPostion = 0;
             }
 
             while (this.byteBufferRead.hasRemaining()) {
                 try {
+                    // 处理网络读
                     int readSize = this.socketChannel.read(this.byteBufferRead);
+
+                    // 如果读取的字节大于0并且本次读取到的内容大于等于8，表明收到了从服务器一条拉取消息的请求，由于有新的从服务器反馈拉取偏移量，服务器端会通知由于同步等待HA复制结果而阻塞的消息发送者线程
                     if (readSize > 0) {
                         readSizeZeroTimes = 0;
                         this.lastReadTimestamp = HAConnection.this.haService.getDefaultMessageStore().getSystemClock().now();
@@ -229,12 +234,16 @@ public class HAConnection {
                             // 如果收到来自slave的确认之后，唤醒等待同步到Slave的线程(如果是SYNC_MASTER) 通知目前slave进度，主要用于master节点为同步类型的
                             HAConnection.this.haService.notifyTransferSome(HAConnection.this.slaveAckOffset);
                         }
-                    } else if (readSize == 0) {
+                    }
+                    // 如果读取到字节数等于0，则重复三次，否则结束本次读请求处理
+                    else if (readSize == 0) {
                         // 如果连续3次读取到0字节，结束本次读请求处理
                         if (++readSizeZeroTimes >= 3) {
                             break;
                         }
-                    } else {
+                    }
+                    // 如果读取到的字节数小于0，表示连接处于半关闭状态，返回false则意味着消息服务器将关闭该连接
+                    else {
                         log.error("read socket[" + HAConnection.this.clientAddr + "] < 0");
                         return false;
                     }
@@ -299,14 +308,14 @@ public class HAConnection {
             while (!this.isStopped()) {
                 try {
                     this.selector.select(1000);
-                    // 说明还没收到来自slave的offset，等待10ms重试
+                    // 如果slaveRequestOffset等于-1，说明master还没有收到从服务器的拉取请求，放弃本次的事件处理，slaveRequestOffset在收到从服务器拉取请求时更新
                     if (-1 == HAConnection.this.slaveRequestOffset) {
                         Thread.sleep(10);
                         continue;
                     }
                     // 如果是第一次发送数据需要计算从哪里开始给slave发送数据
                     if (-1 == this.nextTransferFromWhere) {
-                        // slave如果本地没有数据，请求的offset为0，那么master则从物理文件最后一个文件开始传送数据
+                        // 从当前commitlog文件最大偏移量开始传输，否则根据从服务器的拉取请求偏移量开始传输
                         if (0 == HAConnection.this.slaveRequestOffset) {
                             long masterOffset = HAConnection.this.haService.getDefaultMessageStore().getCommitLog().getMaxOffset();
                             masterOffset =
@@ -326,6 +335,9 @@ public class HAConnection {
                         log.info("master transfer data from " + this.nextTransferFromWhere + " to slave[" + HAConnection.this.clientAddr
                             + "], and slave request " + HAConnection.this.slaveRequestOffset);
                     }
+
+                    // 判断上次写事件是否已将信息全部写入到客户端
+
                     // 传输完成。如果上一次transfer完成了才进行下一次transfer
                     if (this.lastWriteOver) {
                         /**
@@ -362,7 +374,9 @@ public class HAConnection {
                             continue;
                     }
 
-                    // 传入一个offset，从CommitLog去拉取消息，和消费者拉取消息类似
+                    // 传输消息到从服务器
+
+                    // 根据消息从服务器请求的待拉取偏移量，查找该偏移量之后所有的可读消息，如果未查找到匹配的消息，通知所有等待线程继续等待100ms
                     SelectMappedBufferResult selectResult =
                         HAConnection.this.haService.getDefaultMessageStore().getCommitLogData(this.nextTransferFromWhere);
                     if (selectResult != null) {

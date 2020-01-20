@@ -101,7 +101,7 @@ public class PullRequestHoldService extends ServiceThread {
         log.info("{} service started", this.getServiceName());
         while (!this.isStopped()) {
             try {
-                // 如果开启了长轮询模式，每次挂起5s后尝试拉取
+                // 如果开启了长轮询模式，每次挂起5s后尝试拉取，判断是否有新消息到达
                 if (this.brokerController.getBrokerConfig().isLongPollingEnable()) {
                     this.waitForRunning(5 * 1000);
                 } else {
@@ -187,7 +187,7 @@ public class PullRequestHoldService extends ServiceThread {
                         newestOffset = this.brokerController.getMessageStore().getMaxOffsetInQueue(topic, queueId);
                     }
 
-                    // 有消息可以拉取
+                    // 有消息可以拉取（消息消费队列最大偏移量大于待拉取的偏移量，说明有新的消息到达）
                     if (newestOffset > request.getPullFromThisOffset()) {
                         // 判断消息是否符合过滤条件，对于定时唤醒任务，match=true
                         boolean match = request.getMessageFilter().isMatchedByConsumeQueue(tagsCode,

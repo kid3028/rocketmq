@@ -94,11 +94,11 @@ public class PullMessageProcessor implements NettyRequestProcessor {
      *        那么broker就不知道以哪个为准。在实际项目中，属于同一个consumerGroup的消费者，代码必须是同一套
      *
      *
-     * broker处理producer发送来的消息的时候，会有建议broker
+     * broker处理consumer发送来的消息的时候，会有建议broker
      * broker会返回给consumer建议的brokerId的情况：
      *    1.如果slave可读并且当前broker消费过慢的时候，如果没有配置org.apache.rocketmq.common.subscription.SubscriptionGroupConfig#whichBrokerWhenConsumeSlowly的时候，默认是返回brokerId为1的broker
      *    2.如果slave可读并且当前broker消费正常的时候，返回当前broker
-     *    3.如果slave不可读的时候，返回maser
+     *    3.如果slave不可读的时候，返回master
      *    4.如果当前broker是slave，并且需要消费的offset不在合理的范围(Broker没有消息的时候  或  offset > maxOffset  或  offset < minOffset)的时候，返回当前的slave
      * 所以consumer一开始是从master消费消息的，如果出现消费消息过慢的情况，consumer就会从slave(如果slave配置为可读)消费
      *
@@ -111,6 +111,10 @@ public class PullMessageProcessor implements NettyRequestProcessor {
      * @param channel 网络通道
      * @param request 消息拉取请求
      * @param brokerAllowSuspend 是否允许挂起，也就是是否允许在未找到消息时暂时挂起线程，第一次调用时默认为ture
+     *                           如果brokerAllowSuspend=true，表示支持挂起，则将响应对象response设置为null，将不会向客户端写入响应，
+     *                           hasSuspendFlag参数在拉取消息时构建的拉取标记，默认是true
+     *                           默认支持挂起，则根据是否卡其长轮询来决定挂起方式，如果支持长轮询模式，挂起超时时间来源于请求参数，PUSH模式15s，
+     *                           Pull模式通过DefaultMQPullConsumer#brokerSuspendMaxTimeMills设置，默认是20s，然后创建拉取任务PullRequest并提交到PullRequestHoldService线程中
      * @return
      * @throws RemotingCommandException
      */

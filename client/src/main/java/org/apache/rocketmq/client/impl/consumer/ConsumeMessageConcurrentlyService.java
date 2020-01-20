@@ -44,14 +44,22 @@ import java.util.concurrent.*;
  */
 public class ConsumeMessageConcurrentlyService implements ConsumeMessageService {
     private static final InternalLogger log = ClientLogger.getLog();
+    // 消息推模式实现类
     private final DefaultMQPushConsumerImpl defaultMQPushConsumerImpl;
+    // 消费者对象
     private final DefaultMQPushConsumer defaultMQPushConsumer;
+    // 并发消息业务事件类
     private final MessageListenerConcurrently messageListener;
+    // 消息消费任务队列
     private final BlockingQueue<Runnable> consumeRequestQueue;
+    // 消息消费线程池
     private final ThreadPoolExecutor consumeExecutor;
+    // 消费组
     private final String consumerGroup;
 
+    // 添加消息任务到consumeExecutor延迟调度器
     private final ScheduledExecutorService scheduledExecutorService;
+    // 定时删除过期的消息线程池
     private final ScheduledExecutorService cleanExpireMsgExecutors;
 
     public ConsumeMessageConcurrentlyService(DefaultMQPushConsumerImpl defaultMQPushConsumerImpl,
@@ -213,9 +221,12 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
                 // 提交到消费线程池消费
                 this.consumeExecutor.submit(consumeRequest);
             } catch (RejectedExecutionException e) {
+                // 出现拒绝提交则延迟5s后再提交， 实际代码中消费者线程池使用的任务队列是LinkedBlockingQueue无界队列，不会出现拒绝提交异常
                 this.submitConsumeRequestLater(consumeRequest);
             }
-        } else {
+        }
+        // 如果拉取的消息条数大于consumeMessageBatchMaxSize，则对拉取消息进行分页，每页consumeMessageBatchMaxSize条消息，创建多个ConsumeRequest任务并提交到消费线程池
+        else {
             for (int total = 0; total < msgs.size(); ) {
                 // 本次拉取的消费数据大于限值，进行分页消费
                 List<MessageExt> msgThis = new ArrayList<MessageExt>(consumeBatchSize);
@@ -348,7 +359,7 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
                 break;
         }
 
-        // 将消费前缓存的消息清除
+        // 将消费前缓存的消息清除。offset：移除该批消息后最小的偏移量
         long offset = consumeRequest.getProcessQueue().removeMessage(consumeRequest.getMsgs());
         if (offset >= 0 && !consumeRequest.getProcessQueue().isDropped()) {
             // 更新消费进度
@@ -455,6 +466,7 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
          */
         @Override
         public void run() {
+            // 检查ProcessQueue的droped，如果设置为true，则停止该队列的消费，在进行消息重新负载时如果该消息队列被被分配到消费组内的其他消费者后，需要将drop设置为true，阻止消费者继续消费不属于自己的消费队列
             if (this.processQueue.isDropped()) {
                 log.info("the message queue not be able to consume, because it's dropped. group={} {}", ConsumeMessageConcurrentlyService.this.consumerGroup, this.messageQueue);
                 return;
@@ -551,6 +563,8 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
             ConsumeMessageConcurrentlyService.this.getConsumerStatsManager()
                 .incConsumeRT(ConsumeMessageConcurrentlyService.this.consumerGroup, messageQueue.getTopic(), consumeRT);
 
+            // 消费完成之后，再次检查ProcessQueue的dropped，如果为true，将不对结果进行处理，也就是说如果在消费过程中，由于新的消费者加入或者原先的消费者出现宕机导致原先分配
+            // 给消费者的队列在负载之后分配给了其他的消费者，那么在应用程序角度看，消息会被重复消费
             if (!processQueue.isDropped()) {
                 // 返回的结果在这个方法中具体处理
                 ConsumeMessageConcurrentlyService.this.processConsumeResult(status, context, this);

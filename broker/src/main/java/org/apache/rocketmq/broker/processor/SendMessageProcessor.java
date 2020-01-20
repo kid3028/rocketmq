@@ -275,8 +275,9 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         }
 
         /**
-         * 将消息发送到主题为%RETRY%_GROUPNAME，也就是消息重试的消息主题是基于消息组的，而不是每一个主题都有一个重试主题。
+         * 将消息发送到主题为%RETRY%GROUPNAME，也就是消息重试的消息主题是基于消息组的，而不是每一个主题都有一个重试主题。
          * 而是每一个消费组有一个消费主题
+         * 如果已经超过了超时次数，则发送到死信队列 %DLQ%GROUPNAME
          */
         MessageExtBrokerInner msgInner = new MessageExtBrokerInner();
         msgInner.setTopic(newTopic);
@@ -296,6 +297,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         String originMsgId = MessageAccessor.getOriginMessageId(msgExt);
         MessageAccessor.setOriginMessageId(msgInner, UtilAll.isBlank(originMsgId) ? msgExt.getMsgId() : originMsgId);
 
+        // 将消息存储到commitlog
         PutMessageResult putMessageResult = this.brokerController.getMessageStore().putMessage(msgInner);
         if (putMessageResult != null) {
             switch (putMessageResult.getPutMessageStatus()) {

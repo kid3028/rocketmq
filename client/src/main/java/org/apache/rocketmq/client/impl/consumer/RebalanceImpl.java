@@ -117,6 +117,10 @@ public abstract class RebalanceImpl {
         }
     }
 
+    /**
+     * 将分配到的队列组织成Map<brokerName， Set<MessageQueue>>，方便下一步向broker发送锁定消息队列请求
+     * @return
+     */
     private HashMap<String/* brokerName */, Set<MessageQueue>> buildProcessQueueTableByBrokerName() {
         HashMap<String, Set<MessageQueue>> result = new HashMap<String, Set<MessageQueue>>();
         for (MessageQueue mq : this.processQueueTable.keySet()) {
@@ -132,6 +136,13 @@ public abstract class RebalanceImpl {
         return result;
     }
 
+    /**
+     * 如果经过消息队列重新负载后，分配到新的队列时，首先需要尝试向broker发起锁定该消息队列的请求，如果返回加锁成功，则创建该消息队列的拉取任务，
+     * 否则将跳过，等待其他消费者释放该消息队列的锁，然后在下一次队列重新负载时再尝试加锁
+     * 顺序消息消费与并发消息消费的一个关键就是顺序消息在创建消息队列拉取任务时需要在broker服务器锁定该队列
+     * @param mq
+     * @return
+     */
     public boolean lock(final MessageQueue mq) {
         FindBrokerResult findBrokerResult = this.mQClientFactory.findBrokerAddressInSubscribe(mq.getBrokerName(), MixAll.MASTER_ID, true);
         if (findBrokerResult != null) {
@@ -302,10 +313,16 @@ public abstract class RebalanceImpl {
                     List<MessageQueue> mqAll = new ArrayList<MessageQueue>();
                     mqAll.addAll(mqSet);
 
-                    // 将MQ和cid排序
+                    // 将MQ和cid排序，这一步操作是保证同一个消费组内看到的视图保持一致，确保同一个消费队列不会被多个消费者分配
                     Collections.sort(mqAll);
                     Collections.sort(cidAll);
 
+                    // 默认平均分配
+                    // allocateMessageQueueAveragely 平均分配
+                    // allocateMessageQueueAveragelyByCircle 平均轮询分配
+                    // allocateMessageQueueConsistentHash 一致性hash，不推荐使用，因为消息队列负载信息不容易跟踪
+                    // allocateMessageQueueByConfig 根据配置，为每一个消费者分配固定的消息队列
+                    // allocateMessageQueueByMachineRoom  根据broker部署机房，对每个消费者负责不同的broker上的队列
                     AllocateMessageQueueStrategy strategy = this.allocateMessageQueueStrategy;
 
                     /**
@@ -383,6 +400,7 @@ public abstract class RebalanceImpl {
         final boolean isOrder) {
         boolean changed = false;
 
+        //当前负载均衡队列集合
         Iterator<Entry<MessageQueue, ProcessQueue>> it = this.processQueueTable.entrySet().iterator();
         /**
          * 遍历消息队列-处理队列缓存，只处理mq的主题与该主题相关的ProcessQueue，如果mq不在当前主题的处理范围内
@@ -396,10 +414,10 @@ public abstract class RebalanceImpl {
             ProcessQueue pq = next.getValue();
 
             if (mq.getTopic().equals(topic)) {
-                // 不再消费这个这个queue消息
+                // 如果队列不再新分配的队列集合中，需要将该队列停止消费并保存消费进度，不再消费这个这个queue消息
                 if (!mqSet.contains(mq)) {
                     pq.setDropped(true);
-                    // 保存offset，并移除queue
+                    // 判断是否将MessageQueue、ProcessQueue缓存表中做移除
                     if (this.removeUnnecessaryMessageQueue(mq, pq)) {
                         it.remove();
                         changed = true;
@@ -427,12 +445,13 @@ public abstract class RebalanceImpl {
         }
 
         List<PullRequest> pullRequestList = new ArrayList<PullRequest>();
+        // 遍历新分配的队列，如果队列不在队列负载均衡表中，需要创建该队列的拉取任务，然后添加到PullMessageService线程的pullRequestQueue中，PullMessageService才会继续拉取任务
         for (MessageQueue mq : mqSet) {
             // 如果是新加入的queue
             if (!this.processQueueTable.containsKey(mq)) {
                 /**
                  * 顺序消息时，添加该消息队列的拉取任务之前，首先要尝试锁定消费者(消费者+CID)，不同消费组可以同时锁定同一个消息消费队列，
-                 * 集群模式下，同一个mq在同一个消费组内只能被一个一个消费者锁定，如果锁定成功，则添加到拉取任务中，如果锁定失败，说明虽然
+                 * 集群模式下，同一个mq在同一个消费组内只能被一个消费者锁定，如果锁定成功，则添加到拉取任务中，如果锁定失败，说明虽然
                  * 发送了消息队列重新负载，但是该消息队列还未被释放，本次负载周期不会进行消息拉取
                  */
                 if (isOrder && !this.lock(mq)) {

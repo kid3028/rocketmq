@@ -45,6 +45,9 @@ public class LocalFileOffsetStore implements OffsetStore {
         "rocketmq.client.localOffsetStoreDir",
         System.getProperty("user.home") + File.separator + ".rocketmq_offsets");
     private final static InternalLogger log = ClientLogger.getLog();
+    /**
+     * 消息客户端
+     */
     private final MQClientInstance mQClientFactory;
     // 消费者组名称
     private final String groupName;

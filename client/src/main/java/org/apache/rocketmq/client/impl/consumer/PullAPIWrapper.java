@@ -77,7 +77,9 @@ public class PullAPIWrapper {
 
         // 更新broker建议
         this.updatePullFromWhichNode(mq, pullResultExt.getSuggestWhichBrokerId());
+        // 拉取到消息
         if (PullStatus.FOUND == pullResult.getPullStatus()) {
+            // 将消息字节数组编码成消息列表
             ByteBuffer byteBuffer = ByteBuffer.wrap(pullResultExt.getMessageBinary());
             List<MessageExt> msgList = MessageDecoder.decodes(byteBuffer);
 
@@ -85,6 +87,7 @@ public class PullAPIWrapper {
             // 执行过滤
             if (!subscriptionData.getTagsSet().isEmpty() && !subscriptionData.isClassFilterMode()) {
                 msgListFilterAgain = new ArrayList<MessageExt>(msgList.size());
+                // 对tag进行过滤
                 for (MessageExt msg : msgList) {
                     if (msg.getTags() != null) {
                         /**

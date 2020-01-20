@@ -51,14 +51,15 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
     private final DefaultMQPushConsumer defaultMQPushConsumer;
     // 顺序消息消费监听器
     private final MessageListenerOrderly messageListener;
-    // 消息消费任务
+    // 消息消费任务队列
     private final BlockingQueue<Runnable> consumeRequestQueue;
     // 消息消费线程池
     private final ThreadPoolExecutor consumeExecutor;
     // 消息消费组
     private final String consumerGroup;
-    // 消息消费队列锁
+    // 消息消费端消息消费队列锁容器，内部持有ConcurrentMap<MessageQueue, Object> mqLockTable
     private final MessageQueueLock messageQueueLock = new MessageQueueLock();
+    // 调度任务线程池
     private final ScheduledExecutorService scheduledExecutorService;
     private volatile boolean stopped = false;
 
@@ -544,7 +545,7 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                         final int consumeBatchSize =
                             ConsumeMessageOrderlyService.this.defaultMQPushConsumer.getConsumeMessageBatchMaxSize();
 
-                        // 从ProcessQueue获取一批消息
+                        // 从ProcessQueue获取一批消息，如果没有取到消息，则设置continueConsume=false，本次消费任务结束。顺序消息消费时，从ProcessQueue中取出的消息，会临时存储在ProcessQueue的consumingMsgOrderlyTreeMap中
                         List<MessageExt> msgs = this.processQueue.takeMessags(consumeBatchSize);
                         if (!msgs.isEmpty()) {
                             final ConsumeOrderlyContext context = new ConsumeOrderlyContext(this.messageQueue);
@@ -570,6 +571,7 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                             ConsumeReturnType returnType = ConsumeReturnType.SUCCESS;
                             boolean hasException = false;
                             try {
+                                // 申请消息消费锁，如果消息队列被丢弃，放弃该消息消费队列的消费，然后执行消息消费监听器，调用业务方具体消息监听器执行真正的消息消费处理逻辑，并通知RocketMQ消息消费结束
                                 this.processQueue.getLockConsume().lock();
                                 if (this.processQueue.isDropped()) {
                                     log.warn("consumeMessage, the message queue not be able to consume, because it's dropped. {}",

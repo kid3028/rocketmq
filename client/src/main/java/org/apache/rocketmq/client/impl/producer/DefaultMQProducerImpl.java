@@ -1310,6 +1310,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         SendResult sendResult = null;
         // 标记消息是half消息
         MessageAccessor.putProperty(msg, MessageConst.PROPERTY_TRANSACTION_PREPARED, "true");
+        // 设置消息生产组的目的是在查询事务消息本地事务状态时，从该生产者组中随机选择一个消息生产即可，然后通过同步调用方式向RocketMQ发送消息
         MessageAccessor.putProperty(msg, MessageConst.PROPERTY_PRODUCER_GROUP, this.defaultMQProducer.getProducerGroup());
         try {
             // 发送half消息，该方法是同步发送，事务消息也必须是同步发送，和发送普通消息调用的是同一个方法。唯一针对事务消息的修改就是在sendKernelImpl中修改了消息sysFlag
@@ -1331,7 +1332,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                     if (null != transactionId && !"".equals(transactionId)) {
                         msg.setTransactionId(transactionId);
                     }
-                    // 执行本地事务
+                    // 执行本地事务，记录事务消息的本地事务状态，例如可以通过将消息唯一Id存储在数据中，并且该方法与业务代码处于同一个事务中，与业务事务要么一起成功，要么一起失败，这里是事务消息设计的关键之一，为后续的事务状态回查提供了唯一的依据
                     localTransactionState = tranExecuter.executeLocalTransaction(msg, arg);
                     if (null == localTransactionState) {
                         localTransactionState = LocalTransactionState.UNKNOW;
